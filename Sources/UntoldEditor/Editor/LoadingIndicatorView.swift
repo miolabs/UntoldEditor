@@ -40,7 +40,7 @@ public struct LoadingIndicatorView: View {
                             // Loading text
                             Text(loadingSummary)
                                 .font(.system(size: 12))
-                                .foregroundColor(.white)
+                                .foregroundColor(.editorTextPrimary)
 
                             // Progress bar if we have total count
                             if totalCount > 0 {
@@ -50,11 +50,11 @@ public struct LoadingIndicatorView: View {
 
                                 Text("\(Int(currentProgress * 100))%")
                                     .font(.system(size: 10))
-                                    .foregroundColor(.white.opacity(0.8))
+                                    .foregroundColor(.editorTextSecondary)
                             }
                         }
                         .padding(16)
-                        .background(Color.black.opacity(0.8))
+                        .background(Color.editorOverlay)
                         .cornerRadius(8)
                         .shadow(radius: 10)
 
@@ -111,10 +111,10 @@ public struct MinimalLoadingIndicator: View {
 
                     Text("Loading...")
                         .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                 }
                 .padding(6)
-                .background(Color.black.opacity(0.6))
+                .background(Color.editorOverlay)
                 .cornerRadius(4)
             }
         }
@@ -135,7 +135,7 @@ public struct MinimalLoadingIndicator: View {
 
 #Preview {
     ZStack {
-        Color.gray.ignoresSafeArea()
+        Color.editorBackground.ignoresSafeArea()
         LoadingIndicatorView()
     }
 }

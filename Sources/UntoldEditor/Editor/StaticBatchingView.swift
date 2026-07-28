@@ -25,7 +25,7 @@ struct StaticBatchingView: View {
                     .font(.system(size: 14))
                 Text("Static Batching")
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.editorTextPrimary)
             }
             .padding(.bottom, 6)
 
@@ -46,7 +46,7 @@ struct StaticBatchingView: View {
 
                 Text("Enable the batching system globally")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
             }
 
             Divider()
@@ -67,7 +67,7 @@ struct StaticBatchingView: View {
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "square.stack.3d.up.fill")
-                            .foregroundColor(.white)
+                            .foregroundColor(.editorTextPrimary)
                             .font(.system(size: 12))
                         Text("Generate Batches")
                             .font(.system(size: 12))
@@ -76,8 +76,8 @@ struct StaticBatchingView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
+                    .background(Color.editorInfo)
+                    .foregroundColor(.editorTextPrimary)
                     .cornerRadius(6)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -90,7 +90,7 @@ struct StaticBatchingView: View {
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "trash.fill")
-                            .foregroundColor(.white)
+                            .foregroundColor(.editorTextPrimary)
                             .font(.system(size: 12))
                         Text("Clear Batches")
                             .font(.system(size: 12))
@@ -99,8 +99,8 @@ struct StaticBatchingView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 8)
-                    .background(Color.red.opacity(0.8))
-                    .foregroundColor(.white)
+                    .background(Color.editorError.opacity(0.8))
+                    .foregroundColor(.editorTextPrimary)
                     .cornerRadius(6)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -110,13 +110,13 @@ struct StaticBatchingView: View {
             if showGenerateSuccess {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
+                        .foregroundColor(.editorSuccess)
                     Text("Batches generated successfully!")
                         .font(.system(size: 11))
-                        .foregroundColor(.green)
+                        .foregroundColor(.editorSuccess)
                 }
                 .padding(6)
-                .background(Color.green.opacity(0.1))
+                .background(Color.editorSuccess.opacity(0.1))
                 .cornerRadius(6)
                 .transition(.opacity)
             }
@@ -129,17 +129,17 @@ struct StaticBatchingView: View {
                 Text("Batch Statistics")
                     .font(.system(size: 12))
                     .fontWeight(.semibold)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.editorTextPrimary)
 
                 HStack {
                     Text("Active Batches:")
                         .font(.system(size: 11))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                     Spacer()
                     Text("\(batchCount)")
                         .font(.system(size: 11))
                         .fontWeight(.medium)
-                        .foregroundColor(.primary)
+                        .foregroundColor(.editorTextPrimary)
                 }
             }
             .padding(.vertical, 4)
@@ -152,23 +152,23 @@ struct StaticBatchingView: View {
                 Text("How to use:")
                     .font(.system(size: 11))
                     .fontWeight(.semibold)
-                    .foregroundColor(.primary)
+                    .foregroundColor(.editorTextPrimary)
 
                 Text("1. Mark entities as static in Inspector")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
 
                 Text("2. Enable batching toggle above")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
 
                 Text("3. Click 'Generate Batches'")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
 
                 Text("Note: Moving a static entity will automatically disable its batching.")
                     .font(.system(size: 9))
-                    .foregroundColor(.orange)
+                    .foregroundColor(.editorWarning)
                     .padding(.top, 4)
             }
             .padding(.vertical, 4)
@@ -176,9 +176,9 @@ struct StaticBatchingView: View {
             Spacer()
         }
         .padding(8)
-        .background(Color.secondary.opacity(0.1))
+        .background(Color.editorFill)
         .cornerRadius(8)
-        .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: 1)
+        .shadow(color: Color.editorShadow, radius: 3, x: 0, y: 1)
         .onAppear {
             isBatchingEnabled = UntoldEngine.isBatchingEnabled()
             updateBatchCount()

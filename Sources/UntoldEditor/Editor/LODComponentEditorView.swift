@@ -18,7 +18,7 @@ struct LODComponentEditorView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "square.3.layers.3d")
-                    .foregroundColor(.blue)
+                    .foregroundColor(.editorInfo)
                 Text("LOD Levels")
                     .font(.headline)
             }
@@ -40,14 +40,14 @@ struct LODComponentEditorView: View {
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: "plus.circle.fill")
-                            .foregroundColor(.white)
+                            .foregroundColor(.editorTextPrimary)
                         Text("Add LOD Level")
                             .fontWeight(.regular)
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 10)
-                    .background(Color.green)
-                    .foregroundColor(.white)
+                    .background(Color.editorSuccess)
+                    .foregroundColor(.editorTextPrimary)
                     .cornerRadius(6)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -55,7 +55,7 @@ struct LODComponentEditorView: View {
             }
         }
         .padding(12)
-        .background(Color.blue.opacity(0.05))
+        .background(Color.editorInfo.opacity(0.05))
         .cornerRadius(8)
     }
 
@@ -114,15 +114,15 @@ struct LODLevelRow: View {
             HStack(spacing: 8) {
                 Text("LOD\(lodIndex)")
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(Color.blue)
+                    .background(Color.editorInfo)
                     .cornerRadius(4)
 
                 Text(lodLevel.url?.deletingPathExtension().lastPathComponent ?? "Unknown")
                     .font(.system(size: 11))
-                    .foregroundColor(.primary)
+                    .foregroundColor(.editorTextPrimary)
                     .lineLimit(1)
 
                 Spacer()
@@ -132,7 +132,7 @@ struct LODLevelRow: View {
             HStack(spacing: 8) {
                 Text("Distance:")
                     .font(.system(size: 10))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
 
                 // Distance editor
                 if editingDistance {
@@ -152,10 +152,10 @@ struct LODLevelRow: View {
                     }) {
                         Text(String(format: "%.0f", lodLevel.maxDistance))
                             .font(.system(size: 10))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.editorTextSecondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.secondary.opacity(0.1))
+                            .background(Color.editorFill)
                             .cornerRadius(4)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -169,7 +169,7 @@ struct LODLevelRow: View {
                     refreshView()
                 }) {
                     Image(systemName: "trash")
-                        .foregroundColor(.red)
+                        .foregroundColor(.editorError)
                         .font(.system(size: 12))
                 }
                 .buttonStyle(BorderlessButtonStyle())
@@ -177,7 +177,7 @@ struct LODLevelRow: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
-        .background(Color.secondary.opacity(0.05))
+        .background(Color.editorFillSubtle)
         .cornerRadius(6)
     }
 

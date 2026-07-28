@@ -58,7 +58,7 @@ public struct ComponentForm: View {
                     HStack {
                         Text(label)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.editorTextSecondary)
                         TextField(placeholder ?? "",
                                   text: Binding(
                                       get: { get(entityId) },

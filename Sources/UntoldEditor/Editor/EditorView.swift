@@ -1,3 +1,4 @@
+import Combine
 import MetalKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -19,12 +20,12 @@ private struct CameraControlHintsView: View {
             HStack(spacing: 8) {
                 Label("Camera Controls", systemImage: "video.fill")
                     .font(.caption.weight(.semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
                 Spacer()
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(.editorTextSecondary)
                         .frame(width: 20, height: 20)
                 }
                 .buttonStyle(.plain)
@@ -38,7 +39,7 @@ private struct CameraControlHintsView: View {
                 Label("WASD moves, Q/E raises and lowers", systemImage: "keyboard")
             }
             .font(.caption)
-            .foregroundColor(.white.opacity(0.82))
+            .foregroundColor(.editorTextSecondary)
             .labelStyle(.titleAndIcon)
         }
         .padding(12)
@@ -49,7 +50,7 @@ private struct CameraControlHintsView: View {
                 .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(8)
-        .shadow(color: .black.opacity(0.25), radius: 12, x: 0, y: 6)
+        .shadow(color: .editorShadow, radius: 12, x: 0, y: 6)
     }
 }
 
@@ -57,11 +58,18 @@ public struct EditorView: View {
     @State private var editor_entities: [EntityID] = getAllGameEntities()
     @StateObject private var selectionManager = SelectionManager()
     @StateObject private var sceneGraphModel = SceneGraphModel()
+    @StateObject private var sceneCatalog = ProjectSceneCatalog()
     @ObservedObject private var editorBasePath = EditorAssetBasePath.shared
+    @State private var pendingSceneToLoad: URL?
+    @State private var showSceneSwitchAlert = false
     @State private var assets: [String: [Asset]] = [:]
     @State private var selectedAsset: Asset? = nil
     @State private var isPlaying = false
     @State private var showCreateProject = false
+    @State private var bottomPanelTab: BottomPanelTab = .assets
+    @State private var rightPanelEnvTab: EnvEffectsTab = .environment
+    @State private var bottomSearchQuery: String = ""
+    @State private var consoleAutoScroll: Bool = true
     @State private var showInvalidProjectAlert = false
     @State private var invalidProjectMessage = ""
     @State private var showSaveNamePrompt = false
@@ -70,7 +78,10 @@ public struct EditorView: View {
     @State private var pendingTargetURL: URL?
     @State private var isSaveAs = false
     @State private var showSaveBasePathAlert = false
-    @State private var useSceneCameraDuringPlay = false
+    @ObservedObject private var playbackSettings = EditorPlaybackSettings.shared
+    @ObservedObject private var panelVisibility = EditorPanelVisibility.shared
+    @State private var renderPauseGeneration = 0
+    private let panelAnimationDuration = 0.28
     @State private var showWelcomeStart = true
     @State private var showCameraControlHints = false
     @State private var cameraControlHintsDismissed = false
@@ -118,79 +129,88 @@ public struct EditorView: View {
     public var body: some View {
         ZStack {
             VStack {
-                if experienceMode == .edit {
-                    editorToolbar
-                    Divider()
-                }
-                HStack {
+                HStack(spacing: 0) {
                     if experienceMode == .edit {
-                        VStack {
-                            SceneHierarchyView(
-                                selectionManager: selectionManager,
-                                sceneGraphModel: sceneGraphModel,
-                                entityList: editor_entities,
-                                onAddEntity_Editor: editor_addNewEntity,
-                                onRemoveEntity_Editor: editor_removeEntity,
-                                onAddCube: editor_createCube,
-                                onAddSphere: editor_createSphere,
-                                onAddPlane: editor_createPlane,
-                                onAddDirLight: editor_createDirLight,
-                                onAddPointLight: editor_createPointLight,
-                                onAddSpotLight: editor_createSpotLight,
-                                onAddAreaLight: editor_createAreaLight,
-                                onParentEntity: editor_parentEntity,
-                                onUnparentEntity: editor_unparentEntity
-                            )
+                        ZStack {
+                            if panelVisibility.showLeftPanel {
+                                VStack {
+                                    SceneHierarchyView(
+                                        selectionManager: selectionManager,
+                                        sceneGraphModel: sceneGraphModel,
+                                        sceneCatalog: sceneCatalog,
+                                        projectName: editorBasePath.projectName ?? "Untitled Project",
+                                        activeSceneURL: editorController?.currentSceneURL,
+                                        onSelectScene: editor_requestLoadScene,
+                                        isPlaying: isPlaying,
+                                        onTogglePlay: { editor_handlePlayToggle(!isPlaying) },
+                                        entityList: editor_entities,
+                                        onAddEntity_Editor: editor_addNewEntity,
+                                        onRemoveEntity_Editor: editor_removeEntity,
+                                        onAddCube: editor_createCube,
+                                        onAddSphere: editor_createSphere,
+                                        onAddPlane: editor_createPlane,
+                                        onAddDirLight: editor_createDirLight,
+                                        onAddPointLight: editor_createPointLight,
+                                        onAddSpotLight: editor_createSpotLight,
+                                        onAddAreaLight: editor_createAreaLight,
+                                        onParentEntity: editor_parentEntity,
+                                        onUnparentEntity: editor_unparentEntity
+                                    )
+                                }
+                            }
                         }
+                        .frame(maxHeight: .infinity)
+                        .overlay(alignment: .trailing) {
+                            panelEdgeTabVertical(
+                                isOpen: panelVisibility.showLeftPanel,
+                                openIcon: "chevron.left",
+                                closedIcon: "chevron.right",
+                                help: panelVisibility.showLeftPanel ? "Hide left panel" : "Show left panel"
+                            ) { panelVisibility.showLeftPanel.toggle() }
+                                .offset(x: 10)
+                        }
+                        .zIndex(1)
                     }
 
                     VStack(spacing: 0) {
                         editorSceneViewport
                         if experienceMode == .edit {
-                            TransformManipulationToolbar(controller: editorController!)
-                                .frame(height: 40)
-                            TabView {
-                                AssetBrowserView(
-                                    assets: $assets,
-                                    selectedAsset: $selectedAsset,
-                                    selectionManager: selectionManager,
-                                    sceneGraphModel: sceneGraphModel,
-                                    editor_addEntityWithAsset: editor_addEntityWithAsset,
-                                    editor_loadSceneAuthoredFromAsset: editor_loadSceneAuthoredFromAsset
-                                )
-                                .tabItem { Label("Assets", systemImage: "shippingbox") }
-
-                                LogConsoleView()
-                                    .tabItem { Label("Console", systemImage: "terminal") }
+                            ZStack {
+                                if panelVisibility.showBottomPanel {
+                                    editorBottomPanel
+                                }
                             }
-                            .frame(height: 200)
-                            .clipped()
+                            .frame(maxWidth: .infinity)
+                            .overlay(alignment: .top) {
+                                panelEdgeTabHorizontal(
+                                    isOpen: panelVisibility.showBottomPanel,
+                                    help: panelVisibility.showBottomPanel ? "Hide bottom panel" : "Show bottom panel"
+                                ) { panelVisibility.showBottomPanel.toggle() }
+                                    .offset(y: -10)
+                            }
+                            .zIndex(1)
                         }
                     }
+                    .padding(.top, 5)
 
                     if experienceMode == .edit {
-                        TabView {
-                            EnvironmentView(selectedAsset: $selectedAsset)
-                                .tabItem {
-                                    Label("Environment", systemImage: "sun.max")
-                                }
-
-                            PostProcessingEditorView()
-                                .tabItem {
-                                    Label("Effects", systemImage: "cube")
-                                }
-
-                            InspectorView(
-                                selectionManager: selectionManager,
-                                sceneGraphModel: sceneGraphModel,
-                                onAddName_Editor: editor_addName,
-                                selectedAsset: $selectedAsset
-                            )
-                            .tabItem {
-                                Label("Inspector", systemImage: "cube")
+                        ZStack {
+                            if panelVisibility.showRightPanel {
+                                editorRightPanel
+                                    .frame(minWidth: 200, maxWidth: 250, maxHeight: .infinity, alignment: .top)
                             }
                         }
-                        .frame(minWidth: 200, maxWidth: 250)
+                        .frame(maxHeight: .infinity)
+                        .overlay(alignment: .leading) {
+                            panelEdgeTabVertical(
+                                isOpen: panelVisibility.showRightPanel,
+                                openIcon: "chevron.right",
+                                closedIcon: "chevron.left",
+                                help: panelVisibility.showRightPanel ? "Hide right panel" : "Show right panel"
+                            ) { panelVisibility.showRightPanel.toggle() }
+                                .offset(x: -10)
+                        }
+                        .zIndex(1)
                     }
                 }
             }
@@ -202,11 +222,22 @@ public struct EditorView: View {
                 )
                 .ignoresSafeArea()
             )
+            // Animate panel show/hide from any trigger (edge tabs, ⌘1/2/3, ⌘F)
+            // and pause the render loop for the duration so it stays fluid.
+            .animation(.easeInOut(duration: panelAnimationDuration), value: panelVisibility.showLeftPanel)
+            .animation(.easeInOut(duration: panelAnimationDuration), value: panelVisibility.showBottomPanel)
+            .animation(.easeInOut(duration: panelAnimationDuration), value: panelVisibility.showRightPanel)
+            .onChange(of: panelVisibility.showLeftPanel) { _, _ in pauseRenderForPanelAnimation() }
+            .onChange(of: panelVisibility.showBottomPanel) { _, _ in pauseRenderForPanelAnimation() }
+            .onChange(of: panelVisibility.showRightPanel) { _, _ in pauseRenderForPanelAnimation() }
 
             // Loading indicator overlay
             LoadingIndicatorView()
                 .allowsHitTesting(false)
         }
+        // Force dark appearance so system controls (tabs, segmented pickers,
+        // menus, buttons) render light-on-dark to match the editor theme.
+        .preferredColorScheme(.dark)
         .onAppear {
             EditorUndoManager.shared.onStateRestored = {
                 editor_entities = getAllGameEntities()
@@ -215,6 +246,7 @@ public struct EditorView: View {
             }
 
             sceneGraphModel.refreshHierarchy()
+            sceneCatalog.refresh()
             syncEditorAvailabilityForExperienceMode()
 
             // Listen for asset instance loading completion
@@ -236,8 +268,31 @@ public struct EditorView: View {
                 cleanupForProjectSwitch()
             }
         }
-        .onChange(of: useSceneCameraDuringPlay) { _, _ in
+        .onChange(of: playbackSettings.useSceneCameraDuringPlay) { _, _ in
             updateActiveCameraForPlayMode()
+        }
+        // Pause the render loop while the user drags to resize the window so the
+        // viewport doesn't stutter against the live resize; resume when done.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willStartLiveResizeNotification)) { _ in
+            renderer?.metalView.isPaused = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEndLiveResizeNotification)) { _ in
+            renderer?.metalView.isPaused = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editorMenuNew)) { _ in
+            showCreateProject = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editorMenuOpen)) { _ in
+            openExistingProjectFromWelcome()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editorMenuSave)) { _ in
+            editor_handleSave()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editorMenuSaveAs)) { _ in
+            editor_handleSaveAs()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editorMenuReset)) { _ in
+            editor_clearScene()
         }
         .onChange(of: experienceMode) { _, _ in
             syncEditorAvailabilityForExperienceMode()
@@ -283,6 +338,17 @@ public struct EditorView: View {
         }
         .sheet(item: $pendingQuickPreviewExport) { request in
             quickPreviewRuntimeExportSheet(for: request)
+        }
+        .alert("Load Scene?", isPresented: $showSceneSwitchAlert) {
+            Button("Cancel", role: .cancel) {
+                pendingSceneToLoad = nil
+            }
+            Button("Load Scene") {
+                editor_confirmLoadPendingScene()
+            }
+        } message: {
+            let name = pendingSceneToLoad?.deletingPathExtension().lastPathComponent ?? "this scene"
+            return Text("Loading \"\(name)\" will replace the current scene. Any unsaved changes will be lost.")
         }
     }
 
@@ -348,28 +414,260 @@ public struct EditorView: View {
                     .padding(.bottom, 14)
                 }
             }
+            .overlay(alignment: .top) {
+                if experienceMode == .edit, let controller = editorController {
+                    TransformModeCluster(controller: controller)
+                        .padding(.top, 12)
+                }
+            }
     }
 
-    private var editorToolbar: some View {
-        ToolbarView(
-            selectionManager: selectionManager,
-            onSave: editor_handleSave,
-            onSaveAs: editor_handleSaveAs,
-            onClear: editor_clearScene,
-            onPlayToggled: { isPlaying in
-                editor_handlePlayToggle(isPlaying)
-            },
-            useSceneCameraDuringPlay: $useSceneCameraDuringPlay,
-            dirLightCreate: editor_createDirLight,
-            pointLightCreate: editor_createPointLight,
-            spotLightCreate: editor_createSpotLight,
-            areaLightCreate: editor_createAreaLight,
-            onCreateCube: editor_createCube,
-            onCreateSphere: editor_createSphere,
-            onCreatePlane: editor_createPlane,
-            onCreateCylinder: editor_createCylinder,
-            onCreateCone: editor_createCone
+    private enum BottomPanelTab: Hashable {
+        case assets
+        case console
+    }
+
+    private enum EnvEffectsTab: Hashable {
+        case environment
+        case effects
+    }
+
+    // Right panel is contextual: the project shows Environment/Effects (with a
+    // themed segmented switch); a selected object shows the Inspector.
+    private var editorRightPanel: some View {
+        Group {
+            if selectionManager.projectSelected {
+                VStack(spacing: 0) {
+                    HStack {
+                        envEffectsTabs
+                        Spacer()
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.editorPanelBackground.opacity(0.9))
+                    .padding(.top, 5)
+
+                    Group {
+                        switch rightPanelEnvTab {
+                        case .environment:
+                            EnvironmentView(selectedAsset: $selectedAsset)
+                        case .effects:
+                            PostProcessingEditorView()
+                        }
+                    }
+                    .editorPanel()
+                    .padding(5)
+                }
+            } else {
+                InspectorView(
+                    selectionManager: selectionManager,
+                    sceneGraphModel: sceneGraphModel,
+                    onAddName_Editor: editor_addName,
+                    selectedAsset: $selectedAsset
+                )
+                .editorPanel()
+                .padding(5)
+            }
+        }
+    }
+
+    private var envEffectsTabs: some View {
+        HStack(spacing: 2) {
+            envTabButton(.environment, title: "Environment", icon: "sun.max")
+            envTabButton(.effects, title: "Effects", icon: "cube")
+        }
+        .padding(3)
+        .background(Color.editorSurface.opacity(0.6))
+        .cornerRadius(7)
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.editorDivider, lineWidth: 1)
         )
+    }
+
+    private func envTabButton(_ tab: EnvEffectsTab, title: String, icon: String) -> some View {
+        let isSelected = rightPanelEnvTab == tab
+        return Button(action: { rightPanelEnvTab = tab }) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 12)
+            .foregroundColor(isSelected ? .editorTextPrimary : .editorTextSecondary)
+            .background(isSelected ? Color.editorAccent : Color.clear)
+            .cornerRadius(5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+
+    // Themed segmented selector matching the editor style (accent-filled active
+    // segment inside a rounded surface container).
+    private var editorPanelTabs: some View {
+        HStack(spacing: 2) {
+            panelTabButton(.assets, title: "Assets", icon: "shippingbox")
+            panelTabButton(.console, title: "Console", icon: "terminal")
+        }
+        .padding(3)
+        .background(Color.editorSurface.opacity(0.6))
+        .cornerRadius(7)
+        .overlay(
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.editorDivider, lineWidth: 1)
+        )
+    }
+
+    private func panelTabButton(_ tab: BottomPanelTab, title: String, icon: String) -> some View {
+        let isSelected = bottomPanelTab == tab
+        return Button(action: { bottomPanelTab = tab }) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .padding(.vertical, 5)
+            .padding(.horizontal, 12)
+            .foregroundColor(isSelected ? .editorTextPrimary : .editorTextSecondary)
+            .background(isSelected ? Color.editorAccent : Color.clear)
+            .cornerRadius(5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+
+    // Bottom dock: a segmented Assets/Console selector (replacing the old
+    // native TabView tab strip) plus the selected panel below it.
+    // Pause the Metal render loop for the duration of a panel show/hide
+    // animation so the viewport doesn't compete with the layout change (which
+    // caused stutter). Called from onChange, so it covers every trigger: edge
+    // tabs, the View menu (⌘1/2/3) and Focus Viewport (⌘F). The viewport freezes
+    // on its last frame, then resumes.
+    private func pauseRenderForPanelAnimation() {
+        renderer?.metalView.isPaused = true
+        renderPauseGeneration += 1
+        let generation = renderPauseGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + panelAnimationDuration + 0.05) {
+            if generation == renderPauseGeneration {
+                renderer?.metalView.isPaused = false
+            }
+        }
+    }
+
+    // Small always-visible tab that protrudes from a panel's inner edge (placed
+    // as an overlay above the viewport) to collapse/expand the panel.
+    private func panelEdgeTabVertical(
+        isOpen: Bool,
+        openIcon: String,
+        closedIcon: String,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: isOpen ? openIcon : closedIcon)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.editorTextSecondary)
+                .frame(width: 16, height: 48)
+                .background(Color.editorPanelBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.editorDivider, lineWidth: 1)
+                )
+                .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help(help)
+    }
+
+    private func panelEdgeTabHorizontal(
+        isOpen: Bool,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: isOpen ? "chevron.down" : "chevron.up")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(.editorTextSecondary)
+                .frame(width: 48, height: 16)
+                .background(Color.editorPanelBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(Color.editorDivider, lineWidth: 1)
+                )
+                .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 1)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help(help)
+    }
+
+    private var editorBottomPanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                editorPanelTabs
+                Spacer()
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11))
+                        .foregroundColor(.editorTextSecondary)
+                    ExplicitClickTextField(
+                        text: $bottomSearchQuery,
+                        placeholder: bottomPanelTab == .assets ? "Filter assets" : "Filter console"
+                    )
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .frame(maxWidth: 240)
+                .background(Color.editorSurface.opacity(0.6))
+                .cornerRadius(6)
+
+                if bottomPanelTab == .console {
+                    Toggle("Auto‑scroll", isOn: $consoleAutoScroll)
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 11))
+
+                    Button(action: { LogStore.shared.clear() }) {
+                        Image(systemName: "trash")
+                            .foregroundColor(.editorTextSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .help("Clear console")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.editorPanelBackground.opacity(0.9))
+
+            Group {
+                switch bottomPanelTab {
+                case .assets:
+                    AssetBrowserView(
+                        assets: $assets,
+                        selectedAsset: $selectedAsset,
+                        selectionManager: selectionManager,
+                        sceneGraphModel: sceneGraphModel,
+                        searchQuery: $bottomSearchQuery,
+                        editor_addEntityWithAsset: editor_addEntityWithAsset,
+                        editor_loadSceneAuthoredFromAsset: editor_loadSceneAuthoredFromAsset
+                    )
+                case .console:
+                    LogConsoleView(searchQuery: $bottomSearchQuery, autoScroll: $consoleAutoScroll)
+                }
+            }
+            .frame(height: 200)
+            .clipped()
+        }
     }
 
     private var saveScenePrompt: some View {
@@ -378,7 +676,7 @@ public struct EditorView: View {
                 .font(.headline)
             Text("Scenes are saved to the Scenes folder in your Asset Folder.")
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.editorTextSecondary)
 
             TextField("Scene name", text: $pendingSceneName)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -611,6 +909,7 @@ public struct EditorView: View {
         if let sceneURL = editorController?.currentSceneURL {
             let sceneData: SceneData = serializeScene()
             saveSceneDirect(sceneData: sceneData, to: sceneURL)
+            sceneCatalog.refresh()
             return
         }
 
@@ -687,6 +986,7 @@ public struct EditorView: View {
         showSaveNamePrompt = false
         showOverwriteAlert = false
         isSaveAs = false
+        sceneCatalog.refresh()
     }
 
     private func editor_handleLoad() {
@@ -721,6 +1021,48 @@ public struct EditorView: View {
 
             CameraSystem.shared.activeCamera = findSceneCamera()
         }
+    }
+
+    // Load a scene file from the project into the (single) ECS world, replacing
+    // whatever is currently loaded. Used by the Scene Graph panel.
+    private func editor_loadScene(from url: URL) {
+        guard let sceneData = loadGameScene(from: url) else {
+            print("❌ Failed to load scene from \(url.lastPathComponent)")
+            return
+        }
+
+        destroyAllEntities()
+        removeGizmo()
+        EditorComponentsState.shared.clear()
+        EditorUndoManager.shared.clear()
+        sceneAuthoredGameCamera = nil
+
+        deserializeScene(sceneData: sceneData)
+        editorController?.currentSceneURL = url
+
+        editor_entities = getAllGameEntities()
+        selectionManager.selectedEntity = nil
+        activeEntity = .invalid
+        gizmoActive = false
+        selectionManager.objectWillChange.send()
+        sceneGraphModel.refreshHierarchy()
+        sceneCatalog.refresh()
+
+        CameraSystem.shared.activeCamera = findSceneCamera()
+        print("✅ Scene loaded: \(url.lastPathComponent)")
+    }
+
+    // Ask before switching scenes: loading discards the current world.
+    private func editor_requestLoadScene(_ url: URL) {
+        if url == editorController?.currentSceneURL { return }
+        pendingSceneToLoad = url
+        showSceneSwitchAlert = true
+    }
+
+    private func editor_confirmLoadPendingScene() {
+        guard let url = pendingSceneToLoad else { return }
+        pendingSceneToLoad = nil
+        editor_loadScene(from: url)
     }
 
     private func editor_clearScene() {
@@ -854,7 +1196,7 @@ public struct EditorView: View {
     }
 
     private func enableExploreNavigationMode() {
-        useSceneCameraDuringPlay = true
+        playbackSettings.useSceneCameraDuringPlay = true
         setEditorPlayMode(true)
         CameraSystem.shared.activeCamera = findSceneCamera()
     }
@@ -867,7 +1209,7 @@ public struct EditorView: View {
 
     private func updateActiveCameraForPlayMode() {
         if gameMode {
-            CameraSystem.shared.activeCamera = useSceneCameraDuringPlay ? findSceneCamera() : findEditorGameCamera()
+            CameraSystem.shared.activeCamera = playbackSettings.useSceneCameraDuringPlay ? findSceneCamera() : findEditorGameCamera()
         } else {
             CameraSystem.shared.activeCamera = findSceneCamera()
         }
@@ -1650,14 +1992,14 @@ public struct EditorView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Source")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                 Text(request.sourceURL.path)
                     .font(.system(size: 12, design: .monospaced))
                     .lineLimit(2)
 
                 Text("Output")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                     .padding(.top, 6)
                 Text(request.outputURL.path)
                     .font(.system(size: 12, design: .monospaced))
@@ -1678,7 +2020,7 @@ public struct EditorView: View {
                 if quickPreviewCompressGeometry {
                     Text("Requires: pip install lz4")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                         .padding(.leading, 20)
                 }
 
@@ -1691,15 +2033,15 @@ public struct EditorView: View {
                                 .font(.caption)
                             Text("-")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                             Text("Also requires: pip install Pillow")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             Text("astcenc path (optional)")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                             HStack {
                                 TextField("/opt/homebrew/bin/astcenc", text: $quickPreviewAstcencBinPath)
                                     .textFieldStyle(.roundedBorder)
@@ -1726,7 +2068,7 @@ public struct EditorView: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("Exporting...")
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                 }
             }
 

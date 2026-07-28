@@ -333,7 +333,7 @@ private struct RemoteStreamImportSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Manifest URL")
                     .font(.system(size: 12))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                 TextField("https://cdn.example.com/dungeon/dungeon.json", text: $urlString)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
                     .focused($isURLFocused)
@@ -363,12 +363,17 @@ struct AssetBrowserView: View {
     @ObservedObject var selectionManager: SelectionManager
     @ObservedObject var sceneGraphModel: SceneGraphModel
     @State private var folderPathStack: [URL] = []
+    @State private var expandedDirs: Set<URL> = []
+    // Non-empty when a folder outside the fixed categories (e.g. a root-level
+    // directory the user created) is selected. Overrides the category selection.
+    @State private var selectedDirURL: URL?
+    @State private var rootExpanded: Bool = true
     @State private var showSceneLoadConfirmation = false
     @State private var pendingSceneToLoad: URL?
     @State private var showDeleteConfirmation = false
     @State private var pendingDeleteAsset: Asset?
     @State private var showBasePathAlert = false
-    @State private var searchQuery: String = ""
+    @Binding var searchQuery: String
     @State private var statusMessage: String?
     @State private var statusIsError = false
     @State private var targetEntityName: String = "None"
@@ -400,222 +405,368 @@ struct AssetBrowserView: View {
         folderPathStack.last
     }
 
+    // MARK: - Finder helpers
+
+    private func categoryRootURL(_ category: AssetCategory) -> URL? {
+        assetBasePath?.appendingPathComponent(category.rawValue, isDirectory: true)
+    }
+
+    /// Root-level folders the user created that aren't one of the fixed categories.
+    private var customRootFolders: [URL] {
+        guard let root = assetBasePath else { return [] }
+        let categoryNames = Set(AssetCategory.allCases.map(\.rawValue))
+        return subdirectories(of: root).filter { !categoryNames.contains($0.lastPathComponent) }
+    }
+
+    /// The directory currently shown on the right: a generic (non-category)
+    /// selection wins, otherwise the open subfolder, otherwise the selected
+    /// category's root folder.
+    private var currentDirectoryURL: URL? {
+        if let generic = selectedDirURL { return generic }
+        if let folder = currentFolderPath { return folder }
+        guard let raw = selectedCategory, let category = AssetCategory(rawValue: raw) else { return nil }
+        return categoryRootURL(category)
+    }
+
+    /// Category owning `url` (matched by the top-level folder under the asset
+    /// root), used to pick import file types for generic folders.
+    private func inferCategory(for url: URL?) -> AssetCategory? {
+        guard let url, let root = assetBasePath?.standardizedFileURL else { return nil }
+        let rootComponents = root.pathComponents
+        let comps = url.standardizedFileURL.pathComponents
+        guard comps.count > rootComponents.count else { return nil }
+        let top = comps[rootComponents.count]
+        return AssetCategory(rawValue: top)
+    }
+
+    private func subdirectories(of url: URL) -> [URL] {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        return items
+            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+            .sorted { $0.lastPathComponent.localizedCaseInsensitiveCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    private func toggleDir(_ url: URL) {
+        if expandedDirs.contains(url) { expandedDirs.remove(url) } else { expandedDirs.insert(url) }
+    }
+
+    private func isDirectorySelected(url: URL, category: String) -> Bool {
+        guard selectedDirURL == nil else { return false }
+        guard selectedCategory == category else { return false }
+        guard let current = currentDirectoryURL else { return false }
+        return current.standardizedFileURL == url.standardizedFileURL
+    }
+
+    private func selectDirectory(url: URL, category: String) {
+        selectedDirURL = nil
+        selectedCategory = category
+        selectedAsset = nil
+        selectedAssetName = nil
+
+        guard let cat = AssetCategory(rawValue: category), let root = categoryRootURL(cat),
+              url.standardizedFileURL != root.standardizedFileURL
+        else {
+            folderPathStack = []
+            return
+        }
+
+        // Build the folder chain from the category root down to `url`.
+        let rootComponents = root.standardizedFileURL.pathComponents
+        let relative = Array(url.standardizedFileURL.pathComponents.dropFirst(rootComponents.count))
+        var stack: [URL] = []
+        var cursor = root
+        for component in relative {
+            cursor = cursor.appendingPathComponent(component, isDirectory: true)
+            stack.append(cursor)
+        }
+        folderPathStack = stack
+    }
+
+    /// Create a uniquely-named subfolder inside `parent` (creating `parent` if
+    /// needed, e.g. an empty category root) and reveal it.
+    private func createFolder(in parent: URL) {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: parent, withIntermediateDirectories: true)
+
+        var name = "New Folder"
+        var index = 1
+        var dest = parent.appendingPathComponent(name, isDirectory: true)
+        while fm.fileExists(atPath: dest.path) {
+            index += 1
+            name = "New Folder \(index)"
+            dest = parent.appendingPathComponent(name, isDirectory: true)
+        }
+        try? fm.createDirectory(at: dest, withIntermediateDirectories: true)
+        expandedDirs.insert(parent)
+        loadAssets()
+    }
+
+    private func importIntoCurrentDirectory() {
+        let category = selectedCategory.flatMap { AssetCategory(rawValue: $0) }
+            ?? inferCategory(for: currentDirectoryURL)
+            ?? .models
+        importAssetForCategory(category, into: currentDirectoryURL)
+    }
+
+    // Returns AnyView (not `some View`) so the recursive child call is allowed.
+    // `category == nil` marks a generic (non-category) folder such as the root
+    // or a custom directory created at root level. `url` may be nil for a
+    // category root when no project folder is set yet.
+    private func directoryNode(url: URL?, name: String, category: String?, depth: Int) -> AnyView {
+        let isGeneric = (category == nil)
+        let subfolders: [URL] = {
+            guard let url else { return [] }
+            if category == AssetCategory.scripts.rawValue { return [] }
+            return subdirectories(of: url)
+        }()
+        let hasChildren = !subfolders.isEmpty
+        let isExpanded = url.map { expandedDirs.contains($0) } ?? false
+        let isSelected: Bool = {
+            if isGeneric {
+                guard let url, let sel = selectedDirURL else { return false }
+                return sel.standardizedFileURL == url.standardizedFileURL
+            }
+            if let url { return isDirectorySelected(url: url, category: category!) }
+            return selectedDirURL == nil && selectedCategory == category && folderPathStack.isEmpty
+        }()
+
+        return AnyView(
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Button(action: { if let url { toggleDir(url) } }) {
+                        Image(systemName: hasChildren ? (isExpanded ? "chevron.down" : "chevron.right") : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(hasChildren ? .editorTextSecondary : .clear)
+                            .frame(width: 10)
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .disabled(!hasChildren)
+
+                    Image(systemName: isSelected ? "folder.fill" : "folder")
+                        .foregroundColor(isSelected ? Color.editorAccent : .editorTextTertiary)
+                    Text(name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.editorTextPrimary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 6)
+                .padding(.leading, CGFloat(depth) * 12)
+                .background(isSelected ? Color.editorAccentSoft : Color.clear)
+                .cornerRadius(6)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isGeneric {
+                        if let url {
+                            selectedDirURL = url
+                            selectedCategory = nil
+                            folderPathStack = []
+                            selectedAsset = nil
+                            selectedAssetName = nil
+                        }
+                    } else if let url {
+                        selectDirectory(url: url, category: category!)
+                    } else {
+                        selectedDirURL = nil
+                        selectedCategory = category
+                        folderPathStack = []
+                        selectedAsset = nil
+                        selectedAssetName = nil
+                    }
+                }
+                .contextMenu {
+                    Button {
+                        if let url { createFolder(in: url) }
+                    } label: {
+                        Label("New Directory", systemImage: "folder.badge.plus")
+                    }
+                    .disabled(url == nil)
+                }
+
+                if isExpanded {
+                    ForEach(subfolders, id: \.self) { sub in
+                        directoryNode(url: sub, name: sub.lastPathComponent, category: category, depth: depth + 1)
+                    }
+                }
+            }
+        )
+    }
+
+    // Root node of the directory tree (the project's asset folder). Right-click
+    // to create a directory at root level.
+    private var rootDirectoryRow: some View {
+        let root = assetBasePath
+        let isSelected = root.map { r in selectedDirURL?.standardizedFileURL == r.standardizedFileURL } ?? false
+        return HStack(spacing: 6) {
+            Button(action: { rootExpanded.toggle() }) {
+                Image(systemName: rootExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.editorTextSecondary)
+                    .frame(width: 10)
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+
+            Image(systemName: "folder.fill")
+                .foregroundColor(isSelected ? Color.editorAccent : .editorAccent)
+            Text(editorBaseAssetPath.projectName ?? "Assets")
+                .font(.system(size: 13, weight: .bold))
+                .foregroundColor(.editorTextPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(isSelected ? Color.editorAccentSoft : Color.clear)
+        .cornerRadius(6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let root {
+                selectedDirURL = root
+                selectedCategory = nil
+                folderPathStack = []
+                selectedAsset = nil
+                selectedAssetName = nil
+            }
+        }
+        .contextMenu {
+            Button {
+                if let root { createFolder(in: root) }
+            } label: {
+                Label("New Directory", systemImage: "folder.badge.plus")
+            }
+            .disabled(root == nil)
+        }
+    }
+
+    @ViewBuilder
+    private var rightPaneContents: some View {
+        if let selectedDirURL {
+            folderContentsView(for: selectedDirURL, selectionManager: selectionManager)
+        } else if let selectedCategory {
+            let isScripts = (selectedCategory == AssetCategory.scripts.rawValue)
+            if let currentFolderPath, !isScripts {
+                folderContentsView(for: currentFolderPath, selectionManager: selectionManager)
+            } else if let categoryAssets = assets[selectedCategory] {
+                let filtered = categoryAssets.filter { matchesSearch($0) }
+                if filtered.isEmpty {
+                    Text("No assets available")
+                        .foregroundColor(.editorTextTertiary)
+                        .padding()
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(filtered) { asset in
+                            assetRow(asset)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        pendingDeleteAsset = asset
+                                        showDeleteConfirmation = true
+                                    } label: {
+                                        Label("Eliminar", systemImage: "trash")
+                                    }
+                                }
+                                .onTapGesture(count: 2) {
+                                    handle_add_model_double_click(asset: asset)
+                                }
+                                .onTapGesture(count: 1) {
+                                    if asset.isFolder {
+                                        if !isScripts { folderPathStack.append(asset.path) }
+                                    } else {
+                                        selectAsset(asset)
+                                    }
+                                }
+                        }
+                    }
+                }
+            } else {
+                Text("No assets available")
+                    .foregroundColor(.editorTextTertiary)
+                    .padding()
+            }
+        } else {
+            Text("Select a folder")
+                .foregroundColor(.editorTextTertiary)
+                .padding()
+        }
+    }
+
     var body: some View {
         ZStack {
             Color.editorBackground.ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 8) {
-                // MARK: - Top Bar
-
-                HStack {
-                    Text("Assets")
-                        .font(.title3)
-                        .bold()
-                        .foregroundColor(.white)
-
-                    Menu {
-                        ForEach(AssetCategory.allCases, id: \.self) { category in
-                            Button(action: { importAssetForCategory(category) }) {
-                                HStack {
-                                    Image(systemName: category.iconName)
-                                    Text("Import \(category.displayName)")
-                                }
-                            }
-                        }
-                        Divider()
-                        Button(action: { showRemoteStreamSheet = true }) {
-                            HStack {
-                                Image(systemName: "globe")
-                                Text("Import Remote Stream")
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text("Import")
-                            Image(systemName: "plus.circle")
-                                .foregroundColor(.white)
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 12)
-                        .background(Color.editorAccent)
-                        .foregroundColor(.black.opacity(0.9))
-                        .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-
-                    Button(action: loadSelectedSceneAuthoredPayload) {
-                        HStack(spacing: 6) {
-                            Text("Load Authored")
-                            Image(systemName: "camera.badge.ellipsis")
-                                .foregroundColor(.white)
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 12)
-                        .background(selectedSceneAuthoredAsset() == nil ? Color.gray.opacity(0.5) : Color.editorSecondaryAccent)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(selectedSceneAuthoredAsset() == nil)
-                    .help("Load scene-authored cameras and lights from the selected .untold asset or tiled scene manifest")
-                    Button(action: promptDeleteAsset) {
-                        HStack(spacing: 6) {
-                            Text("Delete")
-                            Image(systemName: "trash")
-                                .foregroundColor(.white)
-                        }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 12)
-                        .background(selectedAsset == nil ? Color.gray.opacity(0.5) : Color.red)
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(selectedAsset == nil)
-
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass")
-                        ExplicitClickTextField(text: $searchQuery, placeholder: "Filter assets")
-                    }
-                    .frame(maxWidth: 240)
-
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.editorPanelBackground.opacity(0.9))
-                .cornerRadius(8)
-
-                // MARK: - Target Entity Indicator
-
-                HStack(spacing: 12) {
-                    Text("Target Entity:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(targetEntityName)
-                        .font(.caption)
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 5)
-
-                // MARK: - Sidebar and Asset List Layout
+                // MARK: - Finder-style split: directory tree | folder contents
 
                 HStack(spacing: 8) {
-                    // MARK: - Sidebar
-
+                    // Left: directory tree with a root node (right-click any
+                    // folder — including the root — to create a subfolder).
                     ScrollView(.vertical, showsIndicators: false) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Categories")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.bottom, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            rootDirectoryRow
 
-                            ForEach(AssetCategory.allCases, id: \.self) { category in
-                                HStack {
-                                    Image(systemName: selectedCategory == category.rawValue ? "folder.fill" : "folder")
-                                        .foregroundColor(selectedCategory == category.rawValue ? Color.editorAccent : .gray)
-                                    Text(category.displayName)
-                                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                                        .foregroundColor(selectedCategory == category.rawValue ? .white : .primary)
+                            if rootExpanded {
+                                ForEach(AssetCategory.allCases, id: \.self) { category in
+                                    directoryNode(
+                                        url: categoryRootURL(category),
+                                        name: category.displayName,
+                                        category: category.rawValue,
+                                        depth: 1
+                                    )
                                 }
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 8)
-                                .background(selectedCategory == category.rawValue ? Color.editorAccentSoft : Color.clear)
-                                .cornerRadius(6)
-                                .onTapGesture {
-                                    // If reselecting the same category, force a reload
-                                    if selectedCategory == category.rawValue {
-                                        loadAssets()
-                                    } else {
-                                        selectedCategory = category.rawValue
-                                    }
-                                    // Reset folder navigation when switching category,
-                                    // but Scripts will not use folder navigation at all.
-                                    folderPathStack = []
+                                ForEach(customRootFolders, id: \.self) { url in
+                                    directoryNode(
+                                        url: url,
+                                        name: url.lastPathComponent,
+                                        category: nil,
+                                        depth: 1
+                                    )
                                 }
                             }
                         }
-                        .padding(8)
+                        .padding(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-
-                    .frame(width: 140)
-                    .background(Color.secondary.opacity(0.05))
+                    .frame(width: 225)
+                    .frame(maxHeight: .infinity)
+                    .background(Color.editorFillSubtle)
                     .cornerRadius(8)
 
-                    // MARK: - Asset List
-
+                    // Right: contents of the selected directory
                     ScrollView(.vertical, showsIndicators: true) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            if let selectedCategory {
-                                // Scripts: flat, no breadcrumbs or folders
-                                let isScripts = (selectedCategory == AssetCategory.scripts.rawValue)
-
-                                if !isScripts, !folderPathStack.isEmpty {
-                                    // Show breadcrumb if inside folders (non-Scripts only)
-                                    ScrollView(.horizontal, showsIndicators: false) {
-                                        HStack(spacing: 4) {
-                                            Button("Assets") {
-                                                folderPathStack = []
-                                            }
-
-                                            ForEach(Array(folderPathStack.enumerated()), id: \.element) { index, url in
-                                                Text(">")
-                                                Button(url.lastPathComponent) {
-                                                    folderPathStack = Array(folderPathStack.prefix(upTo: index + 1))
-                                                }
-                                            }
-                                        }
-                                        .font(.caption)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 4)
-                                        .background(Color.secondary.opacity(0.05))
-                                        .cornerRadius(6)
-                                    }
-                                }
-
-                                // Show either folder contents or top-level categories
-                                if let currentFolderPath, !isScripts {
-                                    folderContentsView(for: currentFolderPath, selectionManager: selectionManager)
-                                } else {
-                                    if let categoryAssets = assets[selectedCategory] {
-                                        ForEach(categoryAssets.filter { matchesSearch($0) }) { asset in
-                                            // For Scripts, we never navigate into folders (we won't list folders anyway)
-                                            assetRow(asset)
-                                                .onTapGesture(count: 2) {
-                                                    handle_add_model_double_click(asset: asset)
-                                                }
-                                                .onTapGesture(count: 1) {
-                                                    if asset.isFolder {
-                                                        // Only allow folder navigation for non-Scripts categories
-                                                        if !isScripts {
-                                                            folderPathStack.append(asset.path)
-                                                        }
-                                                    } else {
-                                                        selectAsset(asset)
-                                                    }
-                                                }
-                                        }
-                                    } else {
-                                        Text("No assets available")
-                                            .foregroundColor(.gray)
-                                            .padding()
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 8)
+                        rightPaneContents
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(8)
                     }
-                    .frame(maxHeight: 300)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.editorSurface.opacity(0.7))
                     .cornerRadius(8)
+                    .contextMenu {
+                        Button {
+                            importIntoCurrentDirectory()
+                        } label: {
+                            Label("Import…", systemImage: "plus.circle")
+                        }
+                        Button {
+                            showRemoteStreamSheet = true
+                        } label: {
+                            Label("Import Remote Stream", systemImage: "globe")
+                        }
+                        if selectedSceneAuthoredAsset() != nil {
+                            Divider()
+                            Button {
+                                loadSelectedSceneAuthoredPayload()
+                            } label: {
+                                Label("Load Authored", systemImage: "camera.badge.ellipsis")
+                            }
+                        }
+                    }
                 }
                 .frame(maxHeight: 300)
             }
@@ -693,10 +844,10 @@ struct AssetBrowserView: View {
             if let statusMessage {
                 Text(statusMessage)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 12)
-                    .background(statusIsError ? Color.red.opacity(0.85) : Color.green.opacity(0.85))
+                    .background(statusIsError ? Color.editorError.opacity(0.85) : Color.editorSuccess.opacity(0.85))
                     .cornerRadius(8)
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -704,7 +855,7 @@ struct AssetBrowserView: View {
         }
     }
 
-    private func importAssetForCategory(_ category: AssetCategory) {
+    private func importAssetForCategory(_ category: AssetCategory, into destinationOverride: URL? = nil) {
         guard editorBaseAssetPath.basePath != nil else {
             showBasePathAlert = true
             return
@@ -741,8 +892,10 @@ struct AssetBrowserView: View {
         guard AssetCategory.allCases.map(\.rawValue).contains(categoryString) else { return }
 
         let fm = FileManager.default
-        let categoryRoot = basePath.appendingPathComponent(categoryString, isDirectory: true)
-        // Ensure category folder exists (e.g., <Base>/Models)
+        // Import into the folder the user has open (Finder-style), falling back
+        // to the category root.
+        let categoryRoot = destinationOverride ?? basePath.appendingPathComponent(categoryString, isDirectory: true)
+        // Ensure the destination folder exists (e.g., <Base>/Models or a subfolder)
         try? fm.createDirectory(at: categoryRoot, withIntermediateDirectories: true)
 
         if openPanel.runModal() == .OK {
@@ -890,14 +1043,14 @@ struct AssetBrowserView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Source")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                 Text(request.sourceURL.path)
                     .font(.system(size: 12, design: .monospaced))
                     .lineLimit(2)
 
                 Text("Output")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                     .padding(.top, 6)
                 Text(request.outputURL.path)
                     .font(.system(size: 12, design: .monospaced))
@@ -918,7 +1071,7 @@ struct AssetBrowserView: View {
                 if exportCompressGeometry {
                     Text("Requires: pip install lz4")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                         .padding(.leading, 20)
                 }
 
@@ -931,15 +1084,15 @@ struct AssetBrowserView: View {
                                 .font(.caption)
                             Text("·")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                             Text("Also requires: pip install Pillow")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             Text("astcenc path (optional)")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                             HStack {
                                 TextField("/opt/homebrew/bin/astcenc", text: $astcencBinPath)
                                     .textFieldStyle(.roundedBorder)
@@ -966,7 +1119,7 @@ struct AssetBrowserView: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("Exporting...")
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                 }
             }
 
@@ -1140,14 +1293,14 @@ struct AssetBrowserView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Source")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                 Text(request.sourceURL.path)
                     .font(.system(size: 12, design: .monospaced))
                     .lineLimit(2)
 
                 Text("Output directory")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                     .padding(.top, 6)
                 Text(request.outputDirURL.path)
                     .font(.system(size: 12, design: .monospaced))
@@ -1157,7 +1310,7 @@ struct AssetBrowserView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Tile size (world units)")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
 
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -1188,7 +1341,7 @@ struct AssetBrowserView: View {
                 if exportCompressGeometry {
                     Text("Requires: pip install lz4")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                         .padding(.leading, 20)
                 }
 
@@ -1201,15 +1354,15 @@ struct AssetBrowserView: View {
                                 .font(.caption)
                             Text("·")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                             Text("Also requires: pip install Pillow")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             Text("astcenc path (optional)")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                             HStack {
                                 TextField("/opt/homebrew/bin/astcenc", text: $astcencBinPath)
                                     .textFieldStyle(.roundedBorder)
@@ -1239,7 +1392,7 @@ struct AssetBrowserView: View {
                     ProgressView()
                         .controlSize(.small)
                     Text("Exporting tiles...")
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                 }
             }
 
@@ -1541,7 +1694,7 @@ struct AssetBrowserView: View {
         let isRemote = asset.path.pathExtension.lowercased() == "remotestream"
         return HStack {
             Image(systemName: asset.isFolder ? "folder.fill" : isRemote ? "globe" : "cube.fill")
-                .foregroundColor(isRemote ? .blue : .gray)
+                .foregroundColor(isRemote ? .editorInfo : .editorTextTertiary)
             Text(asset.name)
                 .font(.system(size: 14, weight: .regular, design: .monospaced))
             Spacer()
@@ -1549,7 +1702,7 @@ struct AssetBrowserView: View {
         .padding(.vertical, 6)
         .padding(.horizontal, 10)
         .background(
-            selectedAssetName == asset.name ? Color.secondary.opacity(0.1) : Color.clear
+            selectedAssetName == asset.name ? Color.editorFill : Color.clear
         )
         .cornerRadius(6)
     }
@@ -1560,14 +1713,15 @@ struct AssetBrowserView: View {
             let items = contents.compactMap { item -> Asset? in
                 var isDir: ObjCBool = false
                 if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir) {
+                    let itemCategory = selectedCategory ?? inferCategory(for: item)?.rawValue ?? ""
                     if isDir.boolValue {
-                        return Asset(name: item.lastPathComponent, category: selectedCategory ?? "", path: item, isFolder: true)
+                        return Asset(name: item.lastPathComponent, category: itemCategory, path: item, isFolder: true)
                     } else {
                         let allowedExtensions: Set<String> = [runtimeAssetExtension, "utex", "png", "jpg", "jpeg", "hdr", "exr", "tif", "tiff", "ply", "json", "uscript", "remotestream"]
                         guard allowedExtensions.contains(item.pathExtension.lowercased()) else { return nil }
 
                         return Asset(name: item.lastPathComponent,
-                                     category: selectedCategory ?? "",
+                                     category: itemCategory,
                                      path: item)
                     }
                 }
@@ -1577,13 +1731,23 @@ struct AssetBrowserView: View {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(items.filter { matchesSearch($0) }) { asset in
                     assetRow(asset)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                pendingDeleteAsset = asset
+                                showDeleteConfirmation = true
+                            } label: {
+                                Label("Eliminar", systemImage: "trash")
+                            }
+                        }
                         .onTapGesture(count: 2) {
                             handle_add_model_double_click(asset: asset)
                         }
                         .onTapGesture(count: 1) {
                             if asset.isFolder {
-                                // Only navigate for non-Scripts categories
-                                if selectedCategory != AssetCategory.scripts.rawValue {
+                                if selectedDirURL != nil {
+                                    // Generic navigation (root-level / custom folders)
+                                    selectedDirURL = asset.path
+                                } else if selectedCategory != AssetCategory.scripts.rawValue {
                                     folderPathStack.append(asset.path)
                                 }
                             } else {
@@ -1594,7 +1758,7 @@ struct AssetBrowserView: View {
             }
         } else {
             Text("Folder is empty or inaccessible.")
-                .foregroundColor(.gray)
+                .foregroundColor(.editorTextTertiary)
                 .padding()
         }
     }

@@ -9,9 +9,37 @@
 import SwiftUI
 import UntoldEngine
 
+/// Icon for a hierarchy row. Lights map to their primitive (matching the Add
+/// menu); asset nodes keep their asset icons. The engine doesn't store which
+/// mesh primitive an entity is, so everything else falls back to a cube.
+func hierarchyIconName(for entityId: EntityID) -> String {
+    if hasComponent(entityId: entityId, componentType: DirectionalLightComponent.self) {
+        return "sun.max"
+    }
+    if hasComponent(entityId: entityId, componentType: PointLightComponent.self) {
+        return "lightbulb"
+    }
+    if hasComponent(entityId: entityId, componentType: SpotLightComponent.self) {
+        return "flashlight.on.fill"
+    }
+    if hasComponent(entityId: entityId, componentType: AreaLightComponent.self) {
+        return "square"
+    }
+    if isDerivedAssetNode(entityId) {
+        return isBindableAssetMeshNode(entityId) ? "cube.fill" : "square.stack.3d.up"
+    }
+    return "cube"
+}
+
 struct SceneHierarchyView: View {
     @ObservedObject var selectionManager: SelectionManager
     @ObservedObject var sceneGraphModel: SceneGraphModel
+    @ObservedObject var sceneCatalog: ProjectSceneCatalog
+    var projectName: String
+    var activeSceneURL: URL?
+    var onSelectScene: (URL) -> Void
+    var isPlaying: Bool
+    var onTogglePlay: () -> Void
     var entityList: [EntityID]
     var onAddEntity_Editor: () -> Void
     var onRemoveEntity_Editor: () -> Void
@@ -25,90 +53,217 @@ struct SceneHierarchyView: View {
     var onParentEntity: (EntityID, EntityID) -> Void = { _, _ in }
     var onUnparentEntity: (EntityID) -> Void = { _ in }
 
+    @State private var activeSceneExpanded = true
+
+    // A scene node in the tree. `url == nil` represents the current, not-yet-saved
+    // ("Untitled") scene, which is always the active one.
+    private struct SceneItem: Identifiable {
+        let url: URL?
+        let name: String
+        let isActive: Bool
+        var id: String { url?.absoluteString ?? "__untitled__" }
+    }
+
+    private var sceneItems: [SceneItem] {
+        var items: [SceneItem] = []
+        let active = activeSceneURL
+        let activeInCatalog = active.map { url in sceneCatalog.scenes.contains { $0.url == url } } ?? false
+
+        // Active scene always shows live elements. If it isn't an on-disk scene
+        // in the catalog, surface it as a synthetic "Untitled Scene" entry.
+        if active == nil || activeInCatalog == false {
+            items.append(SceneItem(
+                url: active,
+                name: active?.deletingPathExtension().lastPathComponent ?? "Untitled Scene",
+                isActive: true
+            ))
+        }
+
+        for scene in sceneCatalog.scenes {
+            items.append(SceneItem(url: scene.url, name: scene.name, isActive: scene.url == active))
+        }
+        return items
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // MARK: - Header with Add/Remove Buttons
+            // MARK: - Project header
 
-            HStack {
-                Image(systemName: "list.bullet.indent")
-                    .foregroundColor(.accentColor)
-                Text("Scene Graph")
-                    .font(.title3)
-                    .fontWeight(.bold)
-                    .foregroundColor(.primary)
+            projectRow
 
-                Spacer()
-
-                // Add Entity Menu
-                Menu {
-                    Button("Empty Entity", systemImage: "plus") { onAddEntity_Editor() }
-                    Divider()
-                    Button("Cube", systemImage: "cube") { onAddCube() }
-                    Button("Sphere", systemImage: "circle") { onAddSphere() }
-                    Button("Plane", systemImage: "square") { onAddPlane() }
-                    Divider()
-                    Button("Directional Light", systemImage: "sun.max") { onAddDirLight() }
-                    Button("Point Light", systemImage: "lightbulb") { onAddPointLight() }
-                    Button("Spot Light", systemImage: "flashlight.on.fill") { onAddSpotLight() }
-                    Button("Area Light", systemImage: "square") { onAddAreaLight() }
-                } label: {
-                    Image(systemName: "plus")
-                        .foregroundColor(.white)
-                        .font(.system(size: 14, weight: .bold))
-                        .padding(8)
-                        .background(Color.blue)
-                        .clipShape(Circle())
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .help("Add Entity")
-
-                // Remove Entity Button
-                Button(action: onRemoveEntity_Editor) {
-                    Image(systemName: "minus.circle.fill")
-                        .foregroundColor(.red)
-                        .font(.system(size: 18))
-                }
-                .buttonStyle(PlainButtonStyle())
-                .help("Remove Selected Entity")
-                .disabled(selectionManager.selectedEntity.map { isDerivedAssetNode($0) } ?? false)
-                .opacity(selectionManager.selectedEntity.map { isDerivedAssetNode($0) } ?? false ? 0.45 : 1.0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(8)
-
-            // MARK: - Entity List
+            // MARK: - Scenes / Elements tree
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(sceneGraphModel.getChildren(entityId: nil), id: \.self) { entityId in
-                        HierarchyNode(
-                            entityId: entityId,
-                            entityName: getEntityName(entityId: entityId),
-                            depth: 0,
-                            sceneGraphModel: sceneGraphModel,
-                            selectionManager: selectionManager,
-                            onParentEntity: onParentEntity,
-                            onUnparentEntity: onUnparentEntity
-                        )
+                    ForEach(sceneItems) { item in
+                        sceneRow(item)
+
+                        if item.isActive, activeSceneExpanded {
+                            ForEach(sceneGraphModel.getChildren(entityId: nil), id: \.self) { entityId in
+                                HierarchyNode(
+                                    entityId: entityId,
+                                    entityName: getEntityName(entityId: entityId),
+                                    depth: 0,
+                                    sceneGraphModel: sceneGraphModel,
+                                    selectionManager: selectionManager,
+                                    onParentEntity: onParentEntity,
+                                    onUnparentEntity: onUnparentEntity
+                                )
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
             }
 
             .scrollContentBackground(.hidden)
-            .frame(maxHeight: 300)
-            .background(Color.secondary.opacity(0.05))
+            .frame(maxHeight: .infinity)
+            .background(Color.editorFillSubtle)
             .cornerRadius(8)
 
-            Spacer() // Pushes content to the top
+            // MARK: - Bottom toolbar (add / remove)
+
+            bottomToolbar
         }
-        .frame(minWidth: 200, maxWidth: 200)
-        .padding(8)
-        .background(Color.editorBackground.ignoresSafeArea())
-        .cornerRadius(12)
+        .padding(5)
+        .frame(minWidth: 320, maxWidth: 320, maxHeight: .infinity)
+        .background(Color.editorBackground)
+        .cornerRadius(8)
+        .shadow(color: Color.editorShadow, radius: 3, x: 0, y: 1)
+        .padding(5)
+    }
+
+    // MARK: - Bottom toolbar
+
+    private var bottomToolbar: some View {
+        HStack(spacing: 12) {
+            // Add Entity Menu
+            Menu {
+                Button("Empty Entity", systemImage: "plus") { onAddEntity_Editor() }
+                Divider()
+                Button("Cube", systemImage: "cube") { onAddCube() }
+                Button("Sphere", systemImage: "circle") { onAddSphere() }
+                Button("Plane", systemImage: "square") { onAddPlane() }
+                Divider()
+                Button("Directional Light", systemImage: "sun.max") { onAddDirLight() }
+                Button("Point Light", systemImage: "lightbulb") { onAddPointLight() }
+                Button("Spot Light", systemImage: "flashlight.on.fill") { onAddSpotLight() }
+                Button("Area Light", systemImage: "square") { onAddAreaLight() }
+            } label: {
+                Image(systemName: "plus")
+                    .foregroundColor(.editorTextPrimary)
+                    .font(.system(size: 13, weight: .bold))
+                    .padding(6)
+                    .background(Color.editorInfo)
+                    .clipShape(Circle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("Add Entity")
+
+            // Remove Entity Button
+            Button(action: onRemoveEntity_Editor) {
+                Image(systemName: "minus.circle.fill")
+                    .foregroundColor(.editorError)
+                    .font(.system(size: 18))
+            }
+            .buttonStyle(PlainButtonStyle())
+            .help("Remove Selected Entity")
+            .disabled(selectionManager.selectedEntity.map { isDerivedAssetNode($0) } ?? false)
+            .opacity(selectionManager.selectedEntity.map { isDerivedAssetNode($0) } ?? false ? 0.45 : 1.0)
+
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.editorFill)
+        .cornerRadius(8)
+    }
+
+    // MARK: - Project row (tree root)
+
+    private var projectRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder.fill")
+                .foregroundColor(.editorAccent)
+            Text(projectName)
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundColor(.editorTextPrimary)
+                .lineLimit(1)
+
+            Spacer()
+
+            playButton
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(selectionManager.projectSelected ? Color.editorAccentSoft : Color.editorFill)
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(selectionManager.projectSelected ? Color.editorAccent : Color.clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectionManager.selectProject()
+        }
+    }
+
+    private var playButton: some View {
+        Button(action: onTogglePlay) {
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(.editorTextPrimary)
+                .frame(width: 26, height: 26)
+                .background(isPlaying ? Color.editorSecondaryAccent : Color.editorAccent)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .help(isPlaying ? "Stop play mode" : "Enter play mode")
+    }
+
+    // MARK: - Scene row (second level)
+
+    private func sceneRow(_ item: SceneItem) -> some View {
+        HStack(spacing: 8) {
+            if item.isActive {
+                Button(action: { activeSceneExpanded.toggle() }) {
+                    Image(systemName: activeSceneExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.editorTextSecondary)
+                        .frame(width: 12)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            } else {
+                Color.clear.frame(width: 12, height: 12)
+            }
+
+            Image(systemName: item.isActive ? "film.fill" : "film")
+                .foregroundColor(item.isActive ? .editorAccent : .editorTextTertiary)
+
+            Text(item.name)
+                .fontWeight(item.isActive ? .semibold : .regular)
+                .foregroundColor(item.isActive ? .editorTextPrimary : .editorTextSecondary)
+                .lineLimit(1)
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(item.isActive ? Color.editorSurface.opacity(0.5) : Color.clear)
+        .cornerRadius(6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if item.isActive {
+                activeSceneExpanded.toggle()
+            } else if let url = item.url {
+                onSelectScene(url)
+            }
+        }
+        .help(item.isActive ? "Active scene" : "Load this scene")
     }
 }
 
@@ -143,7 +298,7 @@ struct EntityRow: View {
     private var styledEntityRow: some View {
         entityRowContent
             .padding(8)
-            .background(isSelected ? Color.gray.opacity(0.8) : Color.clear)
+            .background(isSelected ? Color.editorSurface : Color.clear)
             .cornerRadius(6)
     }
 
@@ -152,7 +307,7 @@ struct EntityRow: View {
             Button(action: onToggleExpanded) {
                 Image(systemName: hasChildren ? (isExpanded ? "chevron.down" : "chevron.right") : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(hasChildren ? .secondary : .clear)
+                    .foregroundColor(hasChildren ? .editorTextSecondary : .clear)
                     .frame(width: 12, height: 12)
             }
             .buttonStyle(.plain)
@@ -160,12 +315,12 @@ struct EntityRow: View {
             .disabled(hasChildren == false)
             .help(isExpanded ? "Collapse Children" : "Expand Children")
 
-            Image(systemName: isAssetNode ? (isBindableAssetMeshNode(entityid) ? "cube.fill" : "square.stack.3d.up") : "cube")
-                .foregroundColor(isSelected ? .white : (isAssetNode ? .secondary : .gray))
+            Image(systemName: hierarchyIconName(for: entityid))
+                .foregroundColor(isSelected ? .editorTextPrimary : (isAssetNode ? .editorTextSecondary : .editorTextTertiary))
 
             Text(entityName)
                 .fontWeight(isSelected ? .bold : .regular)
-                .foregroundColor(isSelected ? .white : (isAssetNode ? .secondary : .primary))
+                .foregroundColor(isSelected ? .editorTextPrimary : (isAssetNode ? .editorTextSecondary : .editorTextPrimary))
 
             Spacer()
         }
@@ -203,7 +358,9 @@ struct HierarchyNode: View {
                 selectionManager: selectionManager
             )
             .contentShape(Rectangle())
-            .padding(.leading, CGFloat(depth * 12))
+            // Indent one chevron-slot (chevron width 12 + HStack spacing 8) per
+            // level, so a child's chevron lines up under its parent's icon.
+            .padding(.leading, CGFloat(depth) * 20)
             .onTapGesture {
                 selectionManager.inspectEntity(entityId: entityId)
             }
@@ -215,7 +372,7 @@ struct HierarchyNode: View {
             }
             .background(
                 isDragOver ?
-                    Color.blue.opacity(0.2) :
+                    Color.editorInfo.opacity(0.2) :
                     Color.clear
             )
 
@@ -296,7 +453,7 @@ struct HierarchyNode: View {
         VStack {
             if isDerivedAssetNode(entityId) {
                 Text("Asset node")
-                    .foregroundColor(.gray)
+                    .foregroundColor(.editorTextTertiary)
             } else if hasParent {
                 Button(action: {
                     DispatchQueue.main.async {
@@ -310,7 +467,7 @@ struct HierarchyNode: View {
                 }
             } else {
                 Text("No parent")
-                    .foregroundColor(.gray)
+                    .foregroundColor(.editorTextTertiary)
             }
         }
     }
