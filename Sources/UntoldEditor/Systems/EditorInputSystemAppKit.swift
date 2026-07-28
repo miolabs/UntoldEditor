@@ -57,6 +57,12 @@
                     return nil
                 }
 
+                // Let Command-based shortcuts (native menu key equivalents like
+                // ⌘1/⌘2/⌘3) reach the menu instead of being eaten as game input.
+                if event.modifierFlags.contains(.command) {
+                    return event
+                }
+
                 if self?.shouldHandleKey(event) == true {
                     self?.keyPressed(event.keyCode)
                     return nil // Mark event as handled

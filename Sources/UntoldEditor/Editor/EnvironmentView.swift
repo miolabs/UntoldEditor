@@ -49,12 +49,9 @@ struct EnvironmentView: View {
             // MARK: - Header
 
             HStack(spacing: 6) {
-                Image(systemName: "leaf.arrow.triangle.circlepath")
-                    .foregroundColor(.accentColor)
-                    .font(.system(size: 14)) // Smaller icon
                 Text("Environment Settings")
                     .font(.headline) // Smaller title
-                    .foregroundColor(.primary)
+                    .foregroundColor(.editorTextPrimary)
             }
             .padding(.bottom, 6)
 
@@ -67,7 +64,7 @@ struct EnvironmentView: View {
             }) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill")
-                        .foregroundColor(.white)
+                        .foregroundColor(.editorTextPrimary)
                         .font(.system(size: 12)) // Smaller icon
                     Text("Add IBL")
                         .font(.system(size: 12))
@@ -76,7 +73,7 @@ struct EnvironmentView: View {
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
                 .background(Color.editorAccent)
-                .foregroundColor(.white)
+                .foregroundColor(.editorTextPrimary)
                 .cornerRadius(6)
             }
             .buttonStyle(PlainButtonStyle())
@@ -91,7 +88,7 @@ struct EnvironmentView: View {
                         .font(.system(size: 12))
                 }
                 .toggleStyle(SwitchToggleStyle())
-                .scaleEffect(0.85) // Make toggle smaller
+                .scaleEffect(0.85, anchor: .leading) // Make toggle smaller, keep left edge aligned
                 .onChange(of: enableApplyIBL) { _, newValue in
                     applyIBL = newValue
                 }
@@ -101,7 +98,7 @@ struct EnvironmentView: View {
                         .font(.system(size: 12))
                 }
                 .toggleStyle(SwitchToggleStyle())
-                .scaleEffect(0.85)
+                .scaleEffect(0.85, anchor: .leading)
                 .onChange(of: enableRenderEnvironment) { _, newValue in
                     renderEnvironment = newValue
                 }
@@ -135,7 +132,7 @@ struct EnvironmentView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Ambient Intensity")
                     .font(.system(size: 12))
-                    .foregroundColor(.primary)
+                    .foregroundColor(.editorTextPrimary)
 
                 TextInputNumberView(label: "Intensity", value: Binding(
                     get: { intensity },
@@ -147,10 +144,6 @@ struct EnvironmentView: View {
                 .frame(maxWidth: 80) // Make the input field smaller
             }
         }
-        .padding(8) // Reduce padding
-        .background(Color.secondary.opacity(0.1))
-        .cornerRadius(8)
-        .shadow(color: Color.black.opacity(0.1), radius: 3, x: 0, y: 1)
         .onAppear {
             enableApplyIBL = applyIBL
             enableRenderEnvironment = renderEnvironment
@@ -238,7 +231,7 @@ struct ColorGradingEditorView: View {
             UndoableEffectSlider(label: "Contrast", undoName: "Change Contrast", range: -5.0 ... 5.0, get: { settings.contrast }, set: { settings.contrast = $0 })
             UndoableEffectSlider(label: "Saturation", undoName: "Change Saturation", range: 0.0 ... 5.0, get: { settings.saturation }, set: { settings.saturation = $0 })
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
@@ -268,7 +261,7 @@ struct WhiteBalanceEditorView: View {
 //                    settings.gain = newGain
 //                }))
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
@@ -287,7 +280,7 @@ struct BloomEditorView: View {
             UndoableEffectSlider(label: "Threshold", undoName: "Change Bloom Threshold", range: 0.0 ... 5.0, get: { settings.threshold }, set: { settings.threshold = $0 })
             UndoableEffectSlider(label: "Intensity", undoName: "Change Bloom Intensity", range: 0.0 ... 100.0, get: { settings.intensity }, set: { settings.intensity = $0 })
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
@@ -313,7 +306,7 @@ struct VignetteEditorView: View {
 //                    settings.center = newCenter
 //                }))
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
@@ -337,7 +330,7 @@ struct ChromaticAberrationEditorView: View {
 //                    settings.center = newCenter
 //                }))
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
@@ -357,7 +350,7 @@ struct DepthOfFieldEditorView: View {
             UndoableEffectSlider(label: "Focus Range", undoName: "Change Focus Range", range: 0.0 ... 10.0, format: "%.4f", get: { settings.focusRange }, set: { settings.focusRange = $0 })
             UndoableEffectSlider(label: "Max Blur", undoName: "Change Max Blur", range: 0.0 ... 0.05, format: "%.4f", get: { settings.maxBlur }, set: { settings.maxBlur = $0 })
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
@@ -377,7 +370,7 @@ struct SSAOEditorView: View {
             UndoableEffectSlider(label: "Bias", undoName: "Change SSAO Bias", range: 0.0 ... 0.1, format: "%.4f", get: { settings.bias }, set: { settings.bias = $0 })
             UndoableEffectSlider(label: "Intensity", undoName: "Change SSAO Intensity", range: 0.0 ... 2.0, get: { settings.intensity }, set: { settings.intensity = $0 })
         }
-        .padding()
+        .padding(.vertical, 4)
     }
 }
 
@@ -424,26 +417,54 @@ struct AntiAliasingEditorView: View {
     @State private var selectedMode = EditorAntiAliasingOption.currentEngineMode()
     @State private var showAdvanced = false
 
+    private func selectMode(_ newValue: EditorAntiAliasingOption) {
+        let oldValue = selectedMode
+        guard oldValue != newValue else { return }
+        selectedMode = newValue
+        antiAliasingMode = newValue.engineMode
+        EditorUndoManager.shared.registerValueChange(
+            name: "Change Anti-Aliasing",
+            oldValue: oldValue,
+            newValue: newValue,
+            apply: { option in
+                antiAliasingMode = option.engineMode
+                selectedMode = option
+            }
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker("Mode", selection: $selectedMode) {
+            // Themed segmented control (equal-width segments that adapt to the
+            // panel width — unlike a native .segmented picker, which has a large
+            // intrinsic minimum width and would push the panel out of alignment).
+            HStack(spacing: 2) {
                 ForEach(EditorAntiAliasingOption.allCases) { option in
-                    Text(option.rawValue).tag(option)
+                    let isSelected = selectedMode == option
+                    Button(action: { selectMode(option) }) {
+                        Text(option.rawValue)
+                            .font(.system(size: 11, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 5)
+                            .foregroundColor(isSelected ? .editorTextPrimary : .editorTextSecondary)
+                            .background(isSelected ? Color.editorAccent : Color.clear)
+                            .cornerRadius(5)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
                 }
             }
-            .pickerStyle(.segmented)
-            .onChange(of: selectedMode) { oldValue, newValue in
-                antiAliasingMode = newValue.engineMode
-                EditorUndoManager.shared.registerValueChange(
-                    name: "Change Anti-Aliasing",
-                    oldValue: oldValue,
-                    newValue: newValue,
-                    apply: { option in
-                        antiAliasingMode = option.engineMode
-                        selectedMode = option
-                    }
-                )
-            }
+            .padding(3)
+            .frame(maxWidth: .infinity)
+            .background(Color.editorSurface.opacity(0.6))
+            .cornerRadius(7)
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color.editorDivider, lineWidth: 1)
+            )
 
             switch selectedMode {
             case .off:
@@ -495,7 +516,7 @@ struct AntiAliasingEditorView: View {
                 EmptyView()
             }
         }
-        .padding()
+        .padding(.vertical, 4)
         .onAppear {
             selectedMode = EditorAntiAliasingOption.currentEngineMode()
         }
@@ -558,7 +579,7 @@ struct PostProcessingEditorView: View {
                             )
                         }
                     }
-                    .padding()
+                    .padding(.vertical, 4)
                 }
 
                 DisclosureGroup("Anti-Aliasing", isExpanded: $showAntiAliasing) {
@@ -593,7 +614,9 @@ struct PostProcessingEditorView: View {
                     SSAOEditorView()
                 }
             }
-            .padding()
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .disclosureGroupStyle(EditorDisclosureStyle())
     }
 }

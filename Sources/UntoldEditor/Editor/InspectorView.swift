@@ -351,7 +351,7 @@ struct InspectorView: View {
                                                 removeComponentFromEntity_Editor(componentType: editor_component.type)
                                             }) {
                                                 Image(systemName: "trash")
-                                                    .foregroundColor(.red)
+                                                    .foregroundColor(.editorError)
                                             }
                                             .buttonStyle(BorderlessButtonStyle())
                                         }
@@ -380,7 +380,7 @@ struct InspectorView: View {
                                     .padding(.vertical, 6)
                                     .padding(.horizontal, 10)
                                     .background(Color.accentColor)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.editorTextPrimary)
                                     .cornerRadius(6)
                                 }
                                 .menuStyle(.borderlessButton)
@@ -388,7 +388,7 @@ struct InspectorView: View {
                             }
 
                         } else {
-                            Text("No entity selected").foregroundColor(.gray)
+                            Text("No entity selected").foregroundColor(.editorTextTertiary)
                         }
                     }
                 }
@@ -396,11 +396,10 @@ struct InspectorView: View {
 
             } else {
                 Text("No entity selected")
-                    .foregroundColor(.gray)
+                    .foregroundColor(.editorTextTertiary)
             }
         }
-        .frame(minWidth: 200, maxWidth: 250)
-        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func addComponentToEntity_Editor(componentType: Any.Type) {
@@ -580,14 +579,14 @@ struct StaticBatchingEditorView: View {
                 )) {
                     HStack {
                         Image(systemName: "square.3.layers.3d")
-                            .foregroundColor(.blue)
+                            .foregroundColor(.editorInfo)
                         Text(labelText)
                             .font(.callout)
                     }
                 }
                 .padding(.vertical, 6)
                 .padding(.horizontal, 8)
-                .background(Color.secondary.opacity(0.05))
+                .background(Color.editorFillSubtle)
                 .cornerRadius(8)
                 .help(helpText)
                 .onAppear {
@@ -633,22 +632,22 @@ struct RenderingEditorView: View {
                     }) {
                         HStack(spacing: 6) {
                             Image(systemName: "plus.circle.fill")
-                                .foregroundColor(.white)
+                                .foregroundColor(.editorTextPrimary)
                             Text("Assign")
                                 .fontWeight(.regular)
                         }
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
                         .background(Color.editorAccent)
-                        .foregroundColor(.white)
+                        .foregroundColor(.editorTextPrimary)
                         .cornerRadius(8)
-                        .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
+                        .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 2)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
             .padding(8)
-            .background(Color.secondary.opacity(0.05))
+            .background(Color.editorFillSubtle)
             .cornerRadius(8)
 
             if hasComponent(entityId: entityId, componentType: RenderComponent.self) {
@@ -700,7 +699,7 @@ struct RenderingEditorView: View {
                                         Image(systemName: "photo")
                                             .resizable()
                                             .frame(width: 64, height: 64)
-                                            .foregroundColor(.gray)
+                                            .foregroundColor(.editorTextTertiary)
                                     }
                                 }
                                 .buttonStyle(PlainButtonStyle())
@@ -711,7 +710,7 @@ struct RenderingEditorView: View {
                                         refreshView()
                                     }) {
                                         Image(systemName: "minus.circle.fill")
-                                            .foregroundColor(.red)
+                                            .foregroundColor(.editorError)
                                     }
                                     .buttonStyle(BorderlessButtonStyle())
 
@@ -721,7 +720,7 @@ struct RenderingEditorView: View {
                                             refreshView()
                                         }) {
                                             Image(systemName: "arrow.counterclockwise.circle.fill")
-                                                .foregroundColor(.blue)
+                                                .foregroundColor(.editorInfo)
                                         }
                                         .buttonStyle(BorderlessButtonStyle())
                                         .help("Restore original embedded texture")
@@ -739,7 +738,7 @@ struct RenderingEditorView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Wrap Mode")
                                         .font(.caption)
-                                        .foregroundColor(.secondary)
+                                        .foregroundColor(.editorTextSecondary)
 
                                     Picker("", selection: bindingForWrapMode(entityId: entityId, textureType: type, meshIndex: meshIndex, onChange: refreshView)) {
                                         ForEach(WrapMode.allCases) { mode in
@@ -761,7 +760,7 @@ struct RenderingEditorView: View {
                 HStack {
                     Text("UV Scale")
                         .font(.callout)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
 
                     TextInputNumberView(
                         label: "",
@@ -814,7 +813,7 @@ struct RenderingEditorView: View {
 
                         Text("Roughness")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.editorTextSecondary)
                     }
 
                     // Metallic Input
@@ -837,7 +836,7 @@ struct RenderingEditorView: View {
 
                         Text("Metallic")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.editorTextSecondary)
                     }
                 }
 
@@ -861,7 +860,7 @@ struct RenderingEditorView: View {
 
                         Text("Opacity")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.editorTextSecondary)
                     }
 
                     VStack {
@@ -885,7 +884,7 @@ struct RenderingEditorView: View {
 
                         Text("Alpha Mask")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.editorTextSecondary)
                     }
                 }
 
@@ -898,7 +897,7 @@ struct RenderingEditorView: View {
                     if let untoldUpdateStatus {
                         Text(untoldUpdateStatus)
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.editorTextSecondary)
                     }
                 }
 
@@ -919,7 +918,7 @@ struct RenderingEditorView: View {
 
                     Text("Emmisive")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                 }
             }
         }
@@ -984,11 +983,11 @@ private struct AssetNodeInspectorBanner: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: isBindableAssetMeshNode(entityId) ? "cube.fill" : "square.stack.3d.up")
-                .foregroundColor(.secondary)
+                .foregroundColor(.editorTextSecondary)
 
             Text(isBindableAssetMeshNode(entityId) ? "Mesh Node" : "Asset Node")
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.editorTextSecondary)
 
             Spacer()
 
@@ -1007,7 +1006,7 @@ private struct AssetNodeInspectorBanner: View {
             }
         }
         .padding(6)
-        .background(Color.secondary.opacity(0.12))
+        .background(Color.editorFill)
         .cornerRadius(6)
     }
 }
@@ -1045,7 +1044,7 @@ private struct TileMeshListInspectorView: View {
                 Spacer()
                 Text("\(meshEntries.count)")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
             }
 
             if let tileComponent {
@@ -1060,14 +1059,14 @@ private struct TileMeshListInspectorView: View {
             if meshEntries.isEmpty {
                 Text("No resident meshes for this tile yet.")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
             } else {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(meshEntries) { entry in
                         HStack(spacing: 6) {
                             Image(systemName: "cube.fill")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
 
                             Text(entry.displayName)
                                 .font(.caption)
@@ -1078,24 +1077,24 @@ private struct TileMeshListInspectorView: View {
 
                             Text("\(entry.submeshCount) sub")
                                 .font(.caption2)
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.editorTextSecondary)
                         }
                     }
                 }
             }
         }
         .padding(8)
-        .background(Color.secondary.opacity(0.08))
+        .background(Color.editorFill)
         .cornerRadius(8)
     }
 
     private func tileInfoRow(_ label: String, _ value: String) -> some View {
         HStack {
             Text(label)
-                .foregroundColor(.secondary)
+                .foregroundColor(.editorTextSecondary)
             Spacer()
             Text(value)
-                .foregroundColor(.primary)
+                .foregroundColor(.editorTextPrimary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
@@ -1139,7 +1138,7 @@ private struct ReadOnlyVectorView: View {
         Text(value, format: .number.precision(.fractionLength(3)))
             .frame(width: 60)
             .padding(.vertical, 3)
-            .background(Color.secondary.opacity(0.12))
+            .background(Color.editorFill)
             .cornerRadius(4)
     }
 }
@@ -1157,13 +1156,13 @@ struct TransformationEditorView: View {
         if hasComponent(entityId: entityId, componentType: StaticBatchComponent.self) {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
+                    .foregroundColor(.editorWarning)
                 Text("This entity is marked for static batching. Transforming it will disable batching.")
                     .font(.caption)
-                    .foregroundColor(.orange)
+                    .foregroundColor(.editorWarning)
             }
             .padding(6)
-            .background(Color.orange.opacity(0.1))
+            .background(Color.editorWarning.opacity(0.1))
             .cornerRadius(6)
         }
 
@@ -1219,7 +1218,7 @@ struct TransformationEditorView: View {
         } else {
             Text("No transform data")
                 .font(.caption)
-                .foregroundColor(.secondary)
+                .foregroundColor(.editorTextSecondary)
         }
     }
 
@@ -1254,14 +1253,14 @@ struct AnimationEditorView: View {
                         refreshView()
                     }) {
                         Image(systemName: "trash")
-                            .foregroundColor(.red)
+                            .foregroundColor(.editorError)
                     }
                 }
             }
         }
         .frame(height: 100)
         .scrollContentBackground(.hidden) // Hide default background
-        .background(Color.gray.opacity(0.3)) // Apply a dark background
+        .background(Color.editorFill) // Apply a dark background
         .cornerRadius(8) // Optional: Add corner radius for a sleek look
         // Add animation UI
         HStack {
@@ -1274,16 +1273,16 @@ struct AnimationEditorView: View {
             }) {
                 HStack {
                     Image(systemName: "plus.circle.fill")
-                        .foregroundColor(.white)
+                        .foregroundColor(.editorTextPrimary)
                     Text("Assign")
                         .fontWeight(.regular)
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
                 .background(Color.editorAccent)
-                .foregroundColor(.white)
+                .foregroundColor(.editorTextPrimary)
                 .cornerRadius(8)
-                .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
+                .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 2)
             }
             .buttonStyle(PlainButtonStyle())
         }
@@ -1667,21 +1666,21 @@ struct GaussianEditorView: View {
             }) {
                 HStack(spacing: 6) {
                     Image(systemName: "plus.circle.fill")
-                        .foregroundColor(.white)
+                        .foregroundColor(.editorTextPrimary)
                     Text("Assign")
                         .fontWeight(.regular)
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
                 .background(Color.editorAccent)
-                .foregroundColor(.white)
+                .foregroundColor(.editorTextPrimary)
                 .cornerRadius(8)
-                .shadow(color: Color.black.opacity(0.2), radius: 4, x: 0, y: 2)
+                .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 2)
             }
             .buttonStyle(PlainButtonStyle())
         }
         .padding(8)
-        .background(Color.secondary.opacity(0.05))
+        .background(Color.editorFillSubtle)
         .cornerRadius(8)
     }
 }

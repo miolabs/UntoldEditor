@@ -36,10 +36,10 @@ struct ScriptComponentInspector: View {
                 if comp.scripts.isEmpty {
                     Text("No scripts attached")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.editorTextSecondary)
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.secondary.opacity(0.1))
+                        .background(Color.editorFill)
                         .cornerRadius(6)
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
@@ -51,10 +51,10 @@ struct ScriptComponentInspector: View {
             } else {
                 Text("No Script Component found")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.1))
+                    .background(Color.editorFill)
                     .cornerRadius(6)
             }
 
@@ -65,14 +65,14 @@ struct ScriptComponentInspector: View {
                 }) {
                     HStack(spacing: 4) {
                         Image(systemName: "doc.badge.plus")
-                            .foregroundColor(.white)
+                            .foregroundColor(.editorTextPrimary)
                         Text("Load Script")
                             .fontWeight(.regular)
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 10)
-                    .background(Color.blue)
-                    .foregroundColor(.white)
+                    .background(Color.editorInfo)
+                    .foregroundColor(.editorTextPrimary)
                     .cornerRadius(6)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -82,9 +82,9 @@ struct ScriptComponentInspector: View {
             if showError {
                 Text(errorMessage)
                     .font(.caption)
-                    .foregroundColor(.red)
+                    .foregroundColor(.editorError)
                     .padding(6)
-                    .background(Color.red.opacity(0.1))
+                    .background(Color.editorError.opacity(0.1))
                     .cornerRadius(4)
             }
         }
@@ -100,10 +100,10 @@ struct ScriptComponentInspector: View {
             if let statusMessage {
                 Text(statusMessage)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
                     .padding(.vertical, 6)
                     .padding(.horizontal, 12)
-                    .background(statusIsError ? Color.red.opacity(0.85) : Color.green.opacity(0.85))
+                    .background(statusIsError ? Color.editorError.opacity(0.85) : Color.editorSuccess.opacity(0.85))
                     .cornerRadius(8)
                     .padding(.bottom, 8)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -122,7 +122,7 @@ struct ScriptComponentInspector: View {
             HStack {
                 Text("Script:")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                 Text(script.name)
                     .font(.caption)
                     .lineLimit(1)
@@ -132,7 +132,7 @@ struct ScriptComponentInspector: View {
             HStack {
                 Text("Trigger:")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                 Text(describeTriggerType(script.metadata.triggerType))
                     .font(.caption)
             }
@@ -140,7 +140,7 @@ struct ScriptComponentInspector: View {
             HStack {
                 Text("Mode:")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(.editorTextSecondary)
                 Text(describeExecutionMode(script.metadata.executionMode))
                     .font(.caption)
             }
@@ -148,7 +148,7 @@ struct ScriptComponentInspector: View {
             if let path, !path.isEmpty {
                 Text(path)
                     .font(.system(size: 9))
-                    .foregroundColor(.gray)
+                    .foregroundColor(.editorTextTertiary)
                     .lineLimit(2)
                     .truncationMode(.middle)
             }
@@ -160,14 +160,14 @@ struct ScriptComponentInspector: View {
                     }) {
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.clockwise")
-                                .foregroundColor(.white)
+                                .foregroundColor(.editorTextPrimary)
                             Text("Reload")
                                 .fontWeight(.regular)
                         }
                         .padding(.vertical, 6)
                         .padding(.horizontal, 10)
-                        .background(Color.orange)
-                        .foregroundColor(.white)
+                        .background(Color.editorWarning)
+                        .foregroundColor(.editorTextPrimary)
                         .cornerRadius(6)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -182,8 +182,8 @@ struct ScriptComponentInspector: View {
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 10)
-                    .background(Color.red)
-                    .foregroundColor(.white)
+                    .background(Color.editorError)
+                    .foregroundColor(.editorTextPrimary)
                     .cornerRadius(6)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -191,7 +191,7 @@ struct ScriptComponentInspector: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.secondary.opacity(0.1))
+        .background(Color.editorFill)
         .cornerRadius(6)
     }
 

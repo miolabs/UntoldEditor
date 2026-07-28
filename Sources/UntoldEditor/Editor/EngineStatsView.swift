@@ -106,22 +106,22 @@ struct EngineStatsOverlayView: View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Engine Stats")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(.editorTextPrimary)
 
             Text(compactOverlayLine(snapshot))
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(.white.opacity(0.95))
+                .foregroundColor(.editorTextPrimary)
                 .lineLimit(3)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.45))
+        .background(Color.editorScrim)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(8)
-        .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 2)
+        .shadow(color: Color.editorShadow, radius: 8, x: 0, y: 2)
         .allowsHitTesting(false)
         .padding(12)
     }
@@ -130,22 +130,22 @@ struct EngineStatsOverlayView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Engine Stats (Advanced)")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(.white)
+                .foregroundColor(.editorTextPrimary)
 
             Text(formatEngineStatsOverlay(snapshot))
                 .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(.white.opacity(0.95))
+                .foregroundColor(.editorTextPrimary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.38))
+        .background(Color.editorScrim)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(8)
-        .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 2)
+        .shadow(color: Color.editorShadow, radius: 8, x: 0, y: 2)
         .allowsHitTesting(false)
         .padding(12)
     }

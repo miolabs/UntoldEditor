@@ -56,7 +56,7 @@ struct DemoGalleryView: View {
                 .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(14)
-        .shadow(color: .black.opacity(0.34), radius: 24, x: 0, y: 14)
+        .shadow(color: .editorShadowStrong, radius: 24, x: 0, y: 14)
     }
 
     private var header: some View {
@@ -64,11 +64,11 @@ struct DemoGalleryView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Explore Untold Engine")
                     .font(.largeTitle.bold())
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
 
                 Text("Open a ready-to-navigate scene. No project setup, asset import, or scene graph knowledge required.")
                     .font(.body)
-                    .foregroundColor(.white.opacity(0.78))
+                    .foregroundColor(.editorTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -105,7 +105,7 @@ struct DemoGalleryView: View {
 
             Text("You can switch to the full editor after loading a scene.")
                 .font(.caption)
-                .foregroundColor(.white.opacity(0.58))
+                .foregroundColor(.editorTextTertiary)
         }
     }
 }
@@ -150,7 +150,7 @@ struct PreviewImportGalleryView: View {
                 .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(14)
-        .shadow(color: .black.opacity(0.34), radius: 24, x: 0, y: 14)
+        .shadow(color: .editorShadowStrong, radius: 24, x: 0, y: 14)
     }
 
     private var header: some View {
@@ -158,11 +158,11 @@ struct PreviewImportGalleryView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Try Your Own Scene")
                     .font(.largeTitle.bold())
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
 
                 Text("Load an exported Untold scene file without creating a project. You can navigate immediately, then open the full editor when you are ready.")
                     .font(.body)
-                    .foregroundColor(.white.opacity(0.78))
+                    .foregroundColor(.editorTextSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -186,11 +186,11 @@ struct PreviewImportGalleryView: View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Need to create one of these files?", systemImage: "wand.and.stars")
                 .font(.headline)
-                .foregroundColor(.white)
+                .foregroundColor(.editorTextPrimary)
 
             Text("Export from Blender with the Untold exporter add-on, or use the CLI exporter to produce .untold runtime assets and tiled .json scene manifests. Gaussian splats can be loaded directly from .ply files.")
                 .font(.caption)
-                .foregroundColor(.white.opacity(0.68))
+                .foregroundColor(.editorTextSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             Link(
@@ -208,13 +208,13 @@ struct PreviewImportGalleryView: View {
                 Text("4. Load here")
             }
             .font(.caption2.weight(.semibold))
-            .foregroundColor(.white.opacity(0.72))
+            .foregroundColor(.editorTextSecondary)
         }
         .padding(12)
         .background(Color.editorSurface.opacity(0.56))
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(10)
     }
@@ -233,26 +233,26 @@ private struct PreviewImportCard: View {
 
                     Image(systemName: mode.systemImageName)
                         .font(.system(size: 38, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.88))
+                        .foregroundColor(.editorTextPrimary)
                 }
                 .frame(height: 96)
 
                 Text(mode.exploreTitle)
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
 
                 Text(mode.exploreSubtitle)
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.68))
+                    .foregroundColor(.editorTextSecondary)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
 
                 Text(mode.exploreFileTypes)
                     .font(.caption2.weight(.semibold))
-                    .foregroundColor(.white.opacity(0.74))
+                    .foregroundColor(.editorTextSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.18))
+                    .background(Color.editorBadgeBackground)
                     .cornerRadius(7)
             }
             .padding(12)
@@ -260,7 +260,7 @@ private struct PreviewImportCard: View {
             .background(Color.editorSurface.opacity(0.72))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(Color.editorDivider, lineWidth: 1)
             )
             .cornerRadius(12)
         }
@@ -281,10 +281,10 @@ struct QuickPreviewSceneOverlayView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
                 Text(mode?.exploreLoadedSubtitle ?? "Your Scene")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.66))
+                    .foregroundColor(.editorTextSecondary)
             }
 
             Spacer()
@@ -306,7 +306,7 @@ struct QuickPreviewSceneOverlayView: View {
                 .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(10)
-        .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 8)
+        .shadow(color: .editorShadow, radius: 14, x: 0, y: 8)
     }
 }
 
@@ -396,7 +396,7 @@ private struct DemoSceneCard: View {
                     } else {
                         Image(systemName: demo.systemImageName)
                             .font(.system(size: 42, weight: .semibold))
-                            .foregroundColor(.white.opacity(0.88))
+                            .foregroundColor(.editorTextPrimary)
                     }
                 }
                 .frame(height: 112)
@@ -404,11 +404,11 @@ private struct DemoSceneCard: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(demo.title)
                         .font(.headline)
-                        .foregroundColor(.white)
+                        .foregroundColor(.editorTextPrimary)
 
                     Text(demo.subtitle)
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.68))
+                        .foregroundColor(.editorTextSecondary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -420,7 +420,7 @@ private struct DemoSceneCard: View {
             .background(Color.editorSurface.opacity(0.72))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    .stroke(Color.editorDivider, lineWidth: 1)
             )
             .cornerRadius(12)
         }
@@ -433,10 +433,10 @@ private struct DemoSceneCard: View {
             ForEach(demo.tags.prefix(3), id: \.self) { tag in
                 Text(tag)
                     .font(.caption2.weight(.semibold))
-                    .foregroundColor(.white.opacity(0.74))
+                    .foregroundColor(.editorTextSecondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.18))
+                    .background(Color.editorBadgeBackground)
                     .cornerRadius(7)
             }
         }
@@ -454,10 +454,10 @@ struct ExploreSceneOverlayView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(demo.title)
                     .font(.headline)
-                    .foregroundColor(.white)
+                    .foregroundColor(.editorTextPrimary)
                 Text("Explore Mode")
                     .font(.caption)
-                    .foregroundColor(.white.opacity(0.66))
+                    .foregroundColor(.editorTextSecondary)
             }
 
             Spacer()
@@ -479,6 +479,6 @@ struct ExploreSceneOverlayView: View {
                 .stroke(Color.editorDivider, lineWidth: 1)
         )
         .cornerRadius(10)
-        .shadow(color: .black.opacity(0.25), radius: 14, x: 0, y: 8)
+        .shadow(color: .editorShadow, radius: 14, x: 0, y: 8)
     }
 }

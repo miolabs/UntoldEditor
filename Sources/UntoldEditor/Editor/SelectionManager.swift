@@ -94,21 +94,35 @@ class SceneGraphModel: ObservableObject {
 class SelectionManager: ObservableObject {
     @Published var selectedEntity: EntityID? = .invalid
     @Published var inspectedMesh: MeshInspectionSelection?
+    /// True when the project itself is selected in the Scene Graph panel. Drives
+    /// the right panel to show Environment/Effects instead of the Inspector.
+    @Published var projectSelected: Bool = false
 
     init() {}
 
+    /// Select the project (deselects any entity). The right panel switches to
+    /// the Environment/Effects editors.
+    func selectProject() {
+        projectSelected = true
+        inspectedMesh = nil
+        selectedEntity = nil
+    }
+
     func selectEntity(entityId: EntityID) {
+        projectSelected = false
         inspectedMesh = nil
         let selectedEntityId = editableAssetRootEntity(for: entityId)
         selectEntity(entityId: selectedEntityId, inspectEntityId: selectedEntityId)
     }
 
     func inspectEntity(entityId: EntityID) {
+        projectSelected = false
         inspectedMesh = nil
         selectEntity(entityId: sceneTransformEntity(for: entityId), inspectEntityId: entityId)
     }
 
     func inspectMesh(entityId: EntityID, meshIndex: Int) {
+        projectSelected = false
         let transformEntityId = sceneTransformEntity(for: entityId)
         selectedEntity = entityId
         inspectedMesh = MeshInspectionSelection(

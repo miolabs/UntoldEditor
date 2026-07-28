@@ -12,64 +12,26 @@ import SwiftUI
 import UntoldEngine
 
 struct LogConsoleView: View {
+    @Binding var searchQuery: String
+    @Binding var autoScroll: Bool
     @StateObject private var store = LogStore.shared
     @State private var selectedLevel: LogLevel? = nil
-    @State private var search = ""
-    @State private var autoScroll = true
     @State private var clearLog = false
 
     private func passes(_ e: LogEvent) -> Bool {
         (selectedLevel == nil || e.level == selectedLevel!) &&
-            (search.isEmpty ||
-                e.message.localizedCaseInsensitiveContains(search) ||
-                e.category.localizedCaseInsensitiveContains(search))
+            (searchQuery.isEmpty ||
+                e.message.localizedCaseInsensitiveContains(searchQuery) ||
+                e.category.localizedCaseInsensitiveContains(searchQuery))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Console")
-                    .font(.title3)
-                    .bold()
-                    .foregroundColor(.primary)
-//                Spacer().frame(width: 16)
-//                Picker("Level", selection: $selectedLevel) {
-//                    Text("All").tag(LogLevel?.none)
-//                    Text("Error").tag(LogLevel?.some(.error))
-//                    Text("Warning").tag(LogLevel?.some(.warning))
-//                    Text("Info").tag(LogLevel?.some(.info))
-//                    Text("Debug").tag(LogLevel?.some(.debug))
-//                    Text("Test").tag(LogLevel?.some(.test))
-//                }
-//                .pickerStyle(.segmented)
-//                .frame(width: 360)
-//                .accentColor(.gray)
-                Spacer()
-                TextField("Search…", text: $search)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 200)
-
-                Toggle("Auto‑scroll", isOn: $autoScroll)
-                    .toggleStyle(.checkbox)
-
-                Button(action: {
-                    LogStore.shared.clear()
-                }) {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(BorderlessButtonStyle())
-                .help("Clear console")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.editorPanelBackground.opacity(0.8))
-            .cornerRadius(8)
-
             ScrollViewReader { proxy in
                 List(store.entries.filter(passes)) { e in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(shortTime(e.timestamp))
-                            .font(.caption).foregroundColor(.secondary)
+                            .font(.caption).foregroundColor(.editorTextSecondary)
                             .frame(width: 84, alignment: .leading)
 
                         Text(e.message)
@@ -96,8 +58,8 @@ struct LogConsoleView: View {
                 }
             }
         }
-        .frame(minHeight: 140)
-        .padding(10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(8)
     }
 
     private func shortTime(_ d: Date) -> String {
@@ -108,12 +70,12 @@ struct LogConsoleView: View {
 
     private func colorForLevel(_ level: LogLevel) -> Color {
         switch level {
-        case .error: return .red
-        case .warning: return .yellow
-        case .info: return .primary
-        case .debug: return .gray
+        case .error: return .editorError
+        case .warning: return .editorWarning
+        case .info: return .editorTextPrimary
+        case .debug: return .editorTextTertiary
         case .test: return Color.editorAccent
-        case .none: return .primary
+        case .none: return .editorTextPrimary
         }
     }
 
@@ -130,11 +92,11 @@ struct LogConsoleView: View {
 
     private func badgeColor(for level: LogLevel) -> Color {
         switch level {
-        case .error: return .red
-        case .warning: return .yellow
-        case .info: return .blue
-        case .debug: return .gray
-        case .test: return .green
+        case .error: return .editorError
+        case .warning: return .editorWarning
+        case .info: return .editorInfo
+        case .debug: return .editorTextTertiary
+        case .test: return .editorSuccess
         case .none: return .clear
         }
     }
