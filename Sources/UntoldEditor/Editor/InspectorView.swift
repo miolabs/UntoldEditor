@@ -565,24 +565,28 @@ struct StaticBatchingEditorView: View {
                     ? "Enable static batching for this entity (combines geometry to reduce draw calls)"
                     : "Enable static batching for all children of this entity (combines geometry to reduce draw calls)"
 
-                Toggle(isOn: Binding(
-                    get: { staticBatchCheckboxState },
-                    set: { isStatic in
-                        if isStatic {
-                            setEntityStaticBatchComponent(entityId: entityId)
-                        } else {
-                            removeEntityStaticBatchComponent(entityId: entityId)
+                HStack {
+                    Image(systemName: "square.3.layers.3d")
+                        .foregroundColor(.editorInfo)
+                    Text(labelText)
+                        .font(.callout)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { staticBatchCheckboxState },
+                        set: { isStatic in
+                            if isStatic {
+                                setEntityStaticBatchComponent(entityId: entityId)
+                            } else {
+                                removeEntityStaticBatchComponent(entityId: entityId)
+                            }
+                            staticBatchCheckboxState = isStatic
+                            refreshView()
                         }
-                        staticBatchCheckboxState = isStatic
-                        refreshView()
-                    }
-                )) {
-                    HStack {
-                        Image(systemName: "square.3.layers.3d")
-                            .foregroundColor(.editorInfo)
-                        Text(labelText)
-                            .font(.callout)
-                    }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .tint(Color.editorAccent)
                 }
                 .padding(.vertical, 6)
                 .padding(.horizontal, 8)
@@ -638,9 +642,13 @@ struct RenderingEditorView: View {
                         }
                         .padding(.vertical, 8)
                         .padding(.horizontal, 12)
-                        .background(Color.editorAccent)
+                        .background(Color.editorSurface)
                         .foregroundColor(.editorTextPrimary)
                         .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.editorDivider, lineWidth: 1)
+                        )
                         .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 2)
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -1279,9 +1287,13 @@ struct AnimationEditorView: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
-                .background(Color.editorAccent)
+                .background(Color.editorSurface)
                 .foregroundColor(.editorTextPrimary)
                 .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.editorDivider, lineWidth: 1)
+                )
                 .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 2)
             }
             .buttonStyle(PlainButtonStyle())
@@ -1672,9 +1684,13 @@ struct GaussianEditorView: View {
                 }
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
-                .background(Color.editorAccent)
+                .background(Color.editorSurface)
                 .foregroundColor(.editorTextPrimary)
                 .cornerRadius(8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.editorDivider, lineWidth: 1)
+                )
                 .shadow(color: Color.editorShadow, radius: 4, x: 0, y: 2)
             }
             .buttonStyle(PlainButtonStyle())

@@ -45,8 +45,9 @@ struct ModeButton: View {
                 // Text(label)
             }
             .padding(8)
-            .background(isActive ? Color.accentColor.opacity(0.2) : Color.clear)
+            .background(isActive ? Color.editorAccentSoft : Color.clear)
             .cornerRadius(6)
+            .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
     }

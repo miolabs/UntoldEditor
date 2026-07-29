@@ -154,7 +154,8 @@ public struct EditorView: View {
                                         onAddSpotLight: editor_createSpotLight,
                                         onAddAreaLight: editor_createAreaLight,
                                         onParentEntity: editor_parentEntity,
-                                        onUnparentEntity: editor_unparentEntity
+                                        onUnparentEntity: editor_unparentEntity,
+                                        onDeleteEntity: editor_removeEntity(_:)
                                     )
                                 }
                             }
@@ -273,6 +274,13 @@ public struct EditorView: View {
         }
         // Pause the render loop while the user drags to resize the window so the
         // viewport doesn't stutter against the live resize; resume when done.
+        // Refresh the hierarchy when entities appear/disappear asynchronously
+        // (streaming/tiled assets create their nodes over several frames). The
+        // render loop (EditorSceneView.didDraw) detects the change and posts this.
+        .onReceive(NotificationCenter.default.publisher(for: .sceneGraphNeedsRefresh)) { _ in
+            editor_entities = getAllGameEntities()
+            sceneGraphModel.refreshHierarchy()
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willStartLiveResizeNotification)) { _ in
             renderer?.metalView.isPaused = true
         }
@@ -284,6 +292,12 @@ public struct EditorView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .editorMenuOpen)) { _ in
             openExistingProjectFromWelcome()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editorMenuNewScene)) { _ in
+            editor_newScene()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .editorMenuSaveProject)) { _ in
+            editor_saveProject()
         }
         .onReceive(NotificationCenter.default.publisher(for: .editorMenuSave)) { _ in
             editor_handleSave()
@@ -458,6 +472,10 @@ public struct EditorView: View {
                     .editorPanel()
                     .padding(5)
                 }
+            } else if selectionManager.sceneSelected {
+                sceneInspector
+                    .editorPanel()
+                    .padding(5)
             } else {
                 InspectorView(
                     selectionManager: selectionManager,
@@ -469,6 +487,47 @@ public struct EditorView: View {
                 .padding(5)
             }
         }
+    }
+
+    // Inspector shown when the active scene is selected in the Scene Graph.
+    private var sceneInspector: some View {
+        let sceneName = editorController?.currentSceneURL?.deletingPathExtension().lastPathComponent ?? "Untitled Scene"
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Scene")
+                .font(.headline)
+                .foregroundColor(.editorTextPrimary)
+
+            Divider()
+
+            HStack {
+                Text("Name")
+                    .foregroundColor(.editorTextSecondary)
+                Spacer()
+                Text(sceneName)
+                    .foregroundColor(.editorTextPrimary)
+                    .lineLimit(1)
+            }
+            .font(.system(size: 12))
+
+            if let url = editorController?.currentSceneURL {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Path")
+                        .foregroundColor(.editorTextSecondary)
+                    Text(url.path)
+                        .foregroundColor(.editorTextTertiary)
+                        .lineLimit(3)
+                        .textSelection(.enabled)
+                }
+                .font(.system(size: 11))
+            } else {
+                Text("This scene hasn't been saved yet.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.editorTextTertiary)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var envEffectsTabs: some View {
@@ -1065,6 +1124,19 @@ public struct EditorView: View {
         editor_loadScene(from: url)
     }
 
+    // Save the project. Projects persist as folders (scenes + imported assets on
+    // disk), so for now this writes the active scene's work into the project.
+    private func editor_saveProject() {
+        editor_handleSave()
+    }
+
+    // Start a fresh, unsaved scene (File → Add New Scene).
+    private func editor_newScene() {
+        editor_clearScene()
+        editorController?.currentSceneURL = nil
+        selectionManager.selectScene()
+    }
+
     private func editor_clearScene() {
         destroyAllEntities()
         removeGizmo()
@@ -1161,6 +1233,24 @@ public struct EditorView: View {
         activeEntity = .invalid
         selectionManager.selectedEntity = nil
         removeGizmo()
+        sceneGraphModel.refreshHierarchy()
+    }
+
+    // Delete a specific entity (used by the Scene Graph right-click menu).
+    private func editor_removeEntity(_ entityId: EntityID) {
+        guard isDerivedAssetNode(entityId) == false else {
+            print("⚠️ Asset nodes cannot be removed directly")
+            return
+        }
+
+        destroyEntity(entityId: entityId)
+
+        editor_entities = getAllGameEntities()
+        if selectionManager.selectedEntity == entityId {
+            selectionManager.selectedEntity = nil
+            activeEntity = .invalid
+            removeGizmo()
+        }
         sceneGraphModel.refreshHierarchy()
     }
 

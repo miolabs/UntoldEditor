@@ -40,5 +40,27 @@ struct EditorSceneView: View, UntoldRendererDelegate {
         }
     }
 
-    func didDraw(in _: MTKView) {}
+    func didDraw(in _: MTKView) {
+        // Detect the moment async asset/tile loading finishes and ask the Scene
+        // Graph to refresh, so streamed-in entities appear without a manual action.
+        SceneGraphLoadWatcher.shared.poll()
+    }
+}
+
+/// Watches the engine's async-loading gate on the render loop and posts a
+/// refresh notification on the falling edge (loading → idle).
+final class SceneGraphLoadWatcher {
+    static let shared = SceneGraphLoadWatcher()
+    private var wasLoading = false
+    private init() {}
+
+    func poll() {
+        let loading = AssetLoadingGate.shared.isLoadingAny
+        if wasLoading, loading == false {
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .sceneGraphNeedsRefresh, object: nil)
+            }
+        }
+        wasLoading = loading
+    }
 }
