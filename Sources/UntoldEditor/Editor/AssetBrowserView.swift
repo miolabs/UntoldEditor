@@ -487,6 +487,16 @@ struct AssetBrowserView: View {
         folderPathStack = stack
     }
 
+    /// Entry point for the "New Directory" menu items. If there's no project
+    /// asset folder yet, tell the user instead of silently doing nothing.
+    private func requestNewDirectory(in parent: URL?) {
+        guard let parent else {
+            showBasePathAlert = true
+            return
+        }
+        createFolder(in: parent)
+    }
+
     /// Create a uniquely-named subfolder inside `parent` (creating `parent` if
     /// needed, e.g. an empty category root) and reveal it.
     private func createFolder(in parent: URL) {
@@ -583,11 +593,10 @@ struct AssetBrowserView: View {
                 }
                 .contextMenu {
                     Button {
-                        if let url { createFolder(in: url) }
+                        requestNewDirectory(in: url)
                     } label: {
                         Label("New Directory", systemImage: "folder.badge.plus")
                     }
-                    .disabled(url == nil)
                 }
 
                 if isExpanded {
@@ -638,11 +647,10 @@ struct AssetBrowserView: View {
         }
         .contextMenu {
             Button {
-                if let root { createFolder(in: root) }
+                requestNewDirectory(in: root)
             } label: {
                 Label("New Directory", systemImage: "folder.badge.plus")
             }
-            .disabled(root == nil)
         }
     }
 

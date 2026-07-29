@@ -14,8 +14,13 @@
 import Foundation
 
 extension Notification.Name {
+    /// Posted when asynchronous asset/tile loading finishes, so the Scene Graph
+    /// can refresh to show the newly-loaded entities.
+    static let sceneGraphNeedsRefresh = Notification.Name("sceneGraphNeedsRefresh")
     static let editorMenuNew = Notification.Name("editorMenuNew")
     static let editorMenuOpen = Notification.Name("editorMenuOpen")
+    static let editorMenuNewScene = Notification.Name("editorMenuNewScene")
+    static let editorMenuSaveProject = Notification.Name("editorMenuSaveProject")
     static let editorMenuSave = Notification.Name("editorMenuSave")
     static let editorMenuSaveAs = Notification.Name("editorMenuSaveAs")
     static let editorMenuReset = Notification.Name("editorMenuReset")

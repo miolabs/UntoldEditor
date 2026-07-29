@@ -53,7 +53,9 @@ struct MeshInspectionSelection: Equatable {
 
 class SceneGraphModel: ObservableObject {
     @Published var childrenMap: [EntityID: [EntityID]] = [:]
-    @Published private(set) var collapsedEntityIds: Set<EntityID> = []
+    // Every node is collapsed by default; we track only the ones the user
+    // expanded. Opening a project therefore shows a tidy, collapsed tree.
+    @Published private(set) var expandedEntityIds: Set<EntityID> = []
 
     func refreshHierarchy() {
         let allEntities = getAllGameEntities()
@@ -67,7 +69,7 @@ class SceneGraphModel: ObservableObject {
         }
 
         let currentEntityIds = Set(allEntities)
-        collapsedEntityIds = collapsedEntityIds.intersection(currentEntityIds)
+        expandedEntityIds = expandedEntityIds.intersection(currentEntityIds)
     }
 
     func getChildren(entityId: EntityID?) -> [EntityID] {
@@ -79,14 +81,14 @@ class SceneGraphModel: ObservableObject {
     }
 
     func isExpanded(entityId: EntityID) -> Bool {
-        collapsedEntityIds.contains(entityId) == false
+        expandedEntityIds.contains(entityId)
     }
 
     func toggleExpanded(entityId: EntityID) {
-        if collapsedEntityIds.contains(entityId) {
-            collapsedEntityIds.remove(entityId)
+        if expandedEntityIds.contains(entityId) {
+            expandedEntityIds.remove(entityId)
         } else {
-            collapsedEntityIds.insert(entityId)
+            expandedEntityIds.insert(entityId)
         }
     }
 }
@@ -97,19 +99,33 @@ class SelectionManager: ObservableObject {
     /// True when the project itself is selected in the Scene Graph panel. Drives
     /// the right panel to show Environment/Effects instead of the Inspector.
     @Published var projectSelected: Bool = false
+    /// True when the active scene node is selected. Drives the right panel to
+    /// show the scene inspector.
+    @Published var sceneSelected: Bool = false
 
     init() {}
 
-    /// Select the project (deselects any entity). The right panel switches to
-    /// the Environment/Effects editors.
+    /// Select the project (deselects any entity/scene). The right panel switches
+    /// to the Environment/Effects editors.
     func selectProject() {
         projectSelected = true
+        sceneSelected = false
+        inspectedMesh = nil
+        selectedEntity = nil
+    }
+
+    /// Select the active scene (deselects project/entity). The right panel shows
+    /// the scene inspector.
+    func selectScene() {
+        sceneSelected = true
+        projectSelected = false
         inspectedMesh = nil
         selectedEntity = nil
     }
 
     func selectEntity(entityId: EntityID) {
         projectSelected = false
+        sceneSelected = false
         inspectedMesh = nil
         let selectedEntityId = editableAssetRootEntity(for: entityId)
         selectEntity(entityId: selectedEntityId, inspectEntityId: selectedEntityId)
@@ -117,12 +133,14 @@ class SelectionManager: ObservableObject {
 
     func inspectEntity(entityId: EntityID) {
         projectSelected = false
+        sceneSelected = false
         inspectedMesh = nil
         selectEntity(entityId: sceneTransformEntity(for: entityId), inspectEntityId: entityId)
     }
 
     func inspectMesh(entityId: EntityID, meshIndex: Int) {
         projectSelected = false
+        sceneSelected = false
         let transformEntityId = sceneTransformEntity(for: entityId)
         selectedEntity = entityId
         inspectedMesh = MeshInspectionSelection(

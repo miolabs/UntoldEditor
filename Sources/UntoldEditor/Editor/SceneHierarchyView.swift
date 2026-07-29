@@ -31,6 +31,33 @@ func hierarchyIconName(for entityId: EntityID) -> String {
     return "cube"
 }
 
+/// The "add entity" actions, bundled so the same menu can be reused by the
+/// bottom "+" toolbar and the right-click context menu.
+struct AddEntityActions {
+    var empty: () -> Void = {}
+    var cube: () -> Void = {}
+    var sphere: () -> Void = {}
+    var plane: () -> Void = {}
+    var dirLight: () -> Void = {}
+    var pointLight: () -> Void = {}
+    var spotLight: () -> Void = {}
+    var areaLight: () -> Void = {}
+}
+
+@ViewBuilder
+func addEntityMenuItems(_ actions: AddEntityActions) -> some View {
+    Button("Empty Entity", systemImage: "plus") { actions.empty() }
+    Divider()
+    Button("Cube", systemImage: "cube") { actions.cube() }
+    Button("Sphere", systemImage: "circle") { actions.sphere() }
+    Button("Plane", systemImage: "square") { actions.plane() }
+    Divider()
+    Button("Directional Light", systemImage: "sun.max") { actions.dirLight() }
+    Button("Point Light", systemImage: "lightbulb") { actions.pointLight() }
+    Button("Spot Light", systemImage: "flashlight.on.fill") { actions.spotLight() }
+    Button("Area Light", systemImage: "square") { actions.areaLight() }
+}
+
 struct SceneHierarchyView: View {
     @ObservedObject var selectionManager: SelectionManager
     @ObservedObject var sceneGraphModel: SceneGraphModel
@@ -52,8 +79,22 @@ struct SceneHierarchyView: View {
     var onAddAreaLight: () -> Void
     var onParentEntity: (EntityID, EntityID) -> Void = { _, _ in }
     var onUnparentEntity: (EntityID) -> Void = { _ in }
+    var onDeleteEntity: (EntityID) -> Void = { _ in }
 
     @State private var activeSceneExpanded = true
+
+    private var addActions: AddEntityActions {
+        AddEntityActions(
+            empty: onAddEntity_Editor,
+            cube: onAddCube,
+            sphere: onAddSphere,
+            plane: onAddPlane,
+            dirLight: onAddDirLight,
+            pointLight: onAddPointLight,
+            spotLight: onAddSpotLight,
+            areaLight: onAddAreaLight
+        )
+    }
 
     // A scene node in the tree. `url == nil` represents the current, not-yet-saved
     // ("Untitled") scene, which is always the active one.
@@ -107,7 +148,9 @@ struct SceneHierarchyView: View {
                                     sceneGraphModel: sceneGraphModel,
                                     selectionManager: selectionManager,
                                     onParentEntity: onParentEntity,
-                                    onUnparentEntity: onUnparentEntity
+                                    onUnparentEntity: onUnparentEntity,
+                                    onDeleteEntity: onDeleteEntity,
+                                    addActions: addActions
                                 )
                             }
                         }
@@ -120,10 +163,6 @@ struct SceneHierarchyView: View {
             .frame(maxHeight: .infinity)
             .background(Color.editorFillSubtle)
             .cornerRadius(8)
-
-            // MARK: - Bottom toolbar (add / remove)
-
-            bottomToolbar
         }
         .padding(5)
         .frame(minWidth: 320, maxWidth: 320, maxHeight: .infinity)
@@ -131,53 +170,6 @@ struct SceneHierarchyView: View {
         .cornerRadius(8)
         .shadow(color: Color.editorShadow, radius: 3, x: 0, y: 1)
         .padding(5)
-    }
-
-    // MARK: - Bottom toolbar
-
-    private var bottomToolbar: some View {
-        HStack(spacing: 12) {
-            // Add Entity Menu
-            Menu {
-                Button("Empty Entity", systemImage: "plus") { onAddEntity_Editor() }
-                Divider()
-                Button("Cube", systemImage: "cube") { onAddCube() }
-                Button("Sphere", systemImage: "circle") { onAddSphere() }
-                Button("Plane", systemImage: "square") { onAddPlane() }
-                Divider()
-                Button("Directional Light", systemImage: "sun.max") { onAddDirLight() }
-                Button("Point Light", systemImage: "lightbulb") { onAddPointLight() }
-                Button("Spot Light", systemImage: "flashlight.on.fill") { onAddSpotLight() }
-                Button("Area Light", systemImage: "square") { onAddAreaLight() }
-            } label: {
-                Image(systemName: "plus")
-                    .foregroundColor(.editorTextPrimary)
-                    .font(.system(size: 13, weight: .bold))
-                    .padding(6)
-                    .background(Color.editorInfo)
-                    .clipShape(Circle())
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .help("Add Entity")
-
-            // Remove Entity Button
-            Button(action: onRemoveEntity_Editor) {
-                Image(systemName: "minus.circle.fill")
-                    .foregroundColor(.editorError)
-                    .font(.system(size: 18))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .help("Remove Selected Entity")
-            .disabled(selectionManager.selectedEntity.map { isDerivedAssetNode($0) } ?? false)
-            .opacity(selectionManager.selectedEntity.map { isDerivedAssetNode($0) } ?? false ? 0.45 : 1.0)
-
-            Spacer()
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.editorFill)
-        .cornerRadius(8)
     }
 
     // MARK: - Project row (tree root)
@@ -227,7 +219,8 @@ struct SceneHierarchyView: View {
     // MARK: - Scene row (second level)
 
     private func sceneRow(_ item: SceneItem) -> some View {
-        HStack(spacing: 8) {
+        let isSceneSelected = item.isActive && selectionManager.sceneSelected
+        return HStack(spacing: 8) {
             if item.isActive {
                 Button(action: { activeSceneExpanded.toggle() }) {
                     Image(systemName: activeSceneExpanded ? "chevron.down" : "chevron.right")
@@ -250,20 +243,42 @@ struct SceneHierarchyView: View {
                 .lineLimit(1)
 
             Spacer()
+
+            if item.isActive {
+                Menu {
+                    addEntityMenuItems(addActions)
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundColor(.editorTextPrimary)
+                        .frame(width: 20, height: 20)
+                        .background(Color.editorInfo)
+                        .clipShape(Circle())
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Add to scene")
+            }
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 6)
-        .background(item.isActive ? Color.editorSurface.opacity(0.5) : Color.clear)
+        .background(isSceneSelected ? Color.editorAccentSoft : (item.isActive ? Color.editorSurface.opacity(0.5) : Color.clear))
         .cornerRadius(6)
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isSceneSelected ? Color.editorAccent : Color.clear, lineWidth: 1)
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             if item.isActive {
-                activeSceneExpanded.toggle()
+                // Select the active scene (its properties show in the Inspector).
+                selectionManager.selectScene()
             } else if let url = item.url {
                 onSelectScene(url)
             }
         }
-        .help(item.isActive ? "Active scene" : "Load this scene")
+        .help(item.isActive ? "Select scene" : "Load this scene")
     }
 }
 
@@ -335,6 +350,8 @@ struct HierarchyNode: View {
     let selectionManager: SelectionManager
     var onParentEntity: (EntityID, EntityID) -> Void = { _, _ in }
     var onUnparentEntity: (EntityID) -> Void = { _ in }
+    var onDeleteEntity: (EntityID) -> Void = { _ in }
+    var addActions: AddEntityActions = AddEntityActions()
     @State private var isDragOver = false
 
     var body: some View {
@@ -386,7 +403,9 @@ struct HierarchyNode: View {
                         sceneGraphModel: sceneGraphModel,
                         selectionManager: selectionManager,
                         onParentEntity: onParentEntity,
-                        onUnparentEntity: onUnparentEntity
+                        onUnparentEntity: onUnparentEntity,
+                        onDeleteEntity: onDeleteEntity,
+                        addActions: addActions
                     )
                 }
             }
@@ -448,26 +467,74 @@ struct HierarchyNode: View {
         getEntityParent(entityId: entityId) != nil
     }
 
+    /// Run an "add" action and parent whatever new root entity it created to
+    /// this node, so adding from an object nests the new object under it.
+    private func addChild(_ create: () -> Void) {
+        let before = Set(getAllGameEntities())
+        create()
+        let newRoots = getAllGameEntities().filter {
+            before.contains($0) == false && getEntityParent(entityId: $0) == nil
+        }
+        for child in newRoots {
+            onParentEntity(child, entityId)
+        }
+    }
+
+    /// Add actions that parent the created entity to this node.
+    private var parentedAddActions: AddEntityActions {
+        AddEntityActions(
+            empty: { addChild(addActions.empty) },
+            cube: { addChild(addActions.cube) },
+            sphere: { addChild(addActions.sphere) },
+            plane: { addChild(addActions.plane) },
+            dirLight: { addChild(addActions.dirLight) },
+            pointLight: { addChild(addActions.pointLight) },
+            spotLight: { addChild(addActions.spotLight) },
+            areaLight: { addChild(addActions.areaLight) }
+        )
+    }
+
     /// Context menu for entity row
     private var contextMenuContent: some View {
         VStack {
+            Menu {
+                // Adding from an object nests the new entity under it; asset
+                // nodes can't be parents, so those add at scene root.
+                addEntityMenuItems(isDerivedAssetNode(entityId) ? addActions : parentedAddActions)
+            } label: {
+                Label("Add", systemImage: "plus")
+            }
+
+            Divider()
+
             if isDerivedAssetNode(entityId) {
                 Text("Asset node")
                     .foregroundColor(.editorTextTertiary)
-            } else if hasParent {
-                Button(action: {
+            } else {
+                if hasParent {
+                    Button(action: {
+                        DispatchQueue.main.async {
+                            onUnparentEntity(entityId)
+                        }
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.up.left")
+                            Text("Unparent")
+                        }
+                    }
+                    Divider()
+                }
+
+                Button(role: .destructive, action: {
                     DispatchQueue.main.async {
-                        onUnparentEntity(entityId)
+                        onDeleteEntity(entityId)
                     }
                 }) {
                     HStack {
-                        Image(systemName: "arrow.up.left")
-                        Text("Unparent")
+                        Image(systemName: "trash")
+                        Text("Delete")
                     }
                 }
-            } else {
-                Text("No parent")
-                    .foregroundColor(.editorTextTertiary)
             }
         }
     }

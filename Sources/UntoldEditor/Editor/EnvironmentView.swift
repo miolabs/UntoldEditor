@@ -72,9 +72,13 @@ struct EnvironmentView: View {
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 8)
-                .background(Color.editorAccent)
+                .background(Color.editorSurface)
                 .foregroundColor(.editorTextPrimary)
                 .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.editorDivider, lineWidth: 1)
+                )
             }
             .buttonStyle(PlainButtonStyle())
 
@@ -83,22 +87,30 @@ struct EnvironmentView: View {
             // MARK: - IBL and Environment Toggles (Compact)
 
             VStack(alignment: .leading, spacing: 6) {
-                Toggle(isOn: $enableApplyIBL) {
+                HStack {
                     Label("Apply IBL", systemImage: enableApplyIBL ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 12))
+                    Spacer()
+                    Toggle("", isOn: $enableApplyIBL)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .tint(Color.editorAccent)
                 }
-                .toggleStyle(SwitchToggleStyle())
-                .scaleEffect(0.85, anchor: .leading) // Make toggle smaller, keep left edge aligned
                 .onChange(of: enableApplyIBL) { _, newValue in
                     applyIBL = newValue
                 }
 
-                Toggle(isOn: $enableRenderEnvironment) {
+                HStack {
                     Label("Render Environment", systemImage: enableRenderEnvironment ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 12))
+                    Spacer()
+                    Toggle("", isOn: $enableRenderEnvironment)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .tint(Color.editorAccent)
                 }
-                .toggleStyle(SwitchToggleStyle())
-                .scaleEffect(0.85, anchor: .leading)
                 .onChange(of: enableRenderEnvironment) { _, newValue in
                     renderEnvironment = newValue
                 }
@@ -159,21 +171,29 @@ private struct UndoableEffectToggle<Label: View>: View {
     @ViewBuilder let label: () -> Label
 
     var body: some View {
-        Toggle(isOn: Binding(
-            get: { isOn },
-            set: { newValue in
-                let oldValue = isOn
-                isOn = newValue
-                DispatchQueue.main.async {
-                    EditorUndoManager.shared.registerValueChange(
-                        name: undoName,
-                        oldValue: oldValue,
-                        newValue: newValue,
-                        apply: { isOn = $0 }
-                    )
+        HStack {
+            label()
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { isOn },
+                set: { newValue in
+                    let oldValue = isOn
+                    isOn = newValue
+                    DispatchQueue.main.async {
+                        EditorUndoManager.shared.registerValueChange(
+                            name: undoName,
+                            oldValue: oldValue,
+                            newValue: newValue,
+                            apply: { isOn = $0 }
+                        )
+                    }
                 }
-            }
-        ), label: label)
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .tint(Color.editorAccent)
+        }
     }
 }
 
@@ -210,6 +230,7 @@ private struct UndoableEffectSlider: View {
                 }
             }
         )
+        .tint(Color.editorAccent)
         Text(String(format: format, get()))
     }
 }

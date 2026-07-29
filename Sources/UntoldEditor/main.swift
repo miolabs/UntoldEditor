@@ -98,6 +98,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileMenuItem.submenu = fileMenu
         addItem(to: fileMenu, title: "New", action: #selector(menuNew), key: "n")
         addItem(to: fileMenu, title: "Open…", action: #selector(menuOpen), key: "o")
+        addItem(to: fileMenu, title: "Save Project", action: #selector(menuSaveProject), key: "")
+        fileMenu.addItem(.separator())
+        let newScene = addItem(to: fileMenu, title: "Add New Scene", action: #selector(menuNewScene), key: "n")
+        newScene.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(.separator())
         addItem(to: fileMenu, title: "Save Scene", action: #selector(menuSave), key: "s")
         let saveAs = addItem(to: fileMenu, title: "Save Scene As…", action: #selector(menuSaveAs), key: "s")
@@ -151,6 +155,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuNew() { NotificationCenter.default.post(name: .editorMenuNew, object: nil) }
     @objc private func menuOpen() { NotificationCenter.default.post(name: .editorMenuOpen, object: nil) }
+    @objc private func menuNewScene() { NotificationCenter.default.post(name: .editorMenuNewScene, object: nil) }
+    @objc private func menuSaveProject() { NotificationCenter.default.post(name: .editorMenuSaveProject, object: nil) }
     @objc private func menuSave() { NotificationCenter.default.post(name: .editorMenuSave, object: nil) }
     @objc private func menuSaveAs() { NotificationCenter.default.post(name: .editorMenuSaveAs, object: nil) }
     @objc private func menuReset() { NotificationCenter.default.post(name: .editorMenuReset, object: nil) }
