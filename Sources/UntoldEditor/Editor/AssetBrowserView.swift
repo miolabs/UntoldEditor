@@ -669,28 +669,8 @@ struct AssetBrowserView: View {
                         .foregroundColor(.editorTextTertiary)
                         .padding()
                 } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(filtered) { asset in
-                            assetRow(asset)
-                                .contextMenu {
-                                    Button(role: .destructive) {
-                                        pendingDeleteAsset = asset
-                                        showDeleteConfirmation = true
-                                    } label: {
-                                        Label("Eliminar", systemImage: "trash")
-                                    }
-                                }
-                                .onTapGesture(count: 2) {
-                                    handle_add_model_double_click(asset: asset)
-                                }
-                                .onTapGesture(count: 1) {
-                                    if asset.isFolder {
-                                        if !isScripts { folderPathStack.append(asset.path) }
-                                    } else {
-                                        selectAsset(asset)
-                                    }
-                                }
-                        }
+                    assetRowList(filtered, spacing: 4) { asset in
+                        if !isScripts { folderPathStack.append(asset.path) }
                     }
                 }
             } else {
@@ -1715,6 +1695,34 @@ struct AssetBrowserView: View {
         .cornerRadius(6)
     }
 
+    // Shared row list used by both the flat-category listing and
+    // folderContentsView. Only the folder-tap navigation differs per call site.
+    private func assetRowList(_ assets: [Asset], spacing: CGFloat, onFolderTap: @escaping (Asset) -> Void) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            ForEach(assets) { asset in
+                assetRow(asset)
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            pendingDeleteAsset = asset
+                            showDeleteConfirmation = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .onTapGesture(count: 2) {
+                        handle_add_model_double_click(asset: asset)
+                    }
+                    .onTapGesture(count: 1) {
+                        if asset.isFolder {
+                            onFolderTap(asset)
+                        } else {
+                            selectAsset(asset)
+                        }
+                    }
+            }
+        }
+    }
+
     @ViewBuilder
     private func folderContentsView(for folder: URL, selectionManager _: SelectionManager) -> some View {
         if let contents = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) {
@@ -1736,32 +1744,12 @@ struct AssetBrowserView: View {
                 return nil
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(items.filter { matchesSearch($0) }) { asset in
-                    assetRow(asset)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                pendingDeleteAsset = asset
-                                showDeleteConfirmation = true
-                            } label: {
-                                Label("Eliminar", systemImage: "trash")
-                            }
-                        }
-                        .onTapGesture(count: 2) {
-                            handle_add_model_double_click(asset: asset)
-                        }
-                        .onTapGesture(count: 1) {
-                            if asset.isFolder {
-                                if selectedDirURL != nil {
-                                    // Generic navigation (root-level / custom folders)
-                                    selectedDirURL = asset.path
-                                } else if selectedCategory != AssetCategory.scripts.rawValue {
-                                    folderPathStack.append(asset.path)
-                                }
-                            } else {
-                                selectAsset(asset)
-                            }
-                        }
+            assetRowList(items.filter { matchesSearch($0) }, spacing: 8) { asset in
+                if selectedDirURL != nil {
+                    // Generic navigation (root-level / custom folders)
+                    selectedDirURL = asset.path
+                } else if selectedCategory != AssetCategory.scripts.rawValue {
+                    folderPathStack.append(asset.path)
                 }
             }
         } else {
