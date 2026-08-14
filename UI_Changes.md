@@ -58,7 +58,7 @@ Summary of changes, restructurings and fixes.
 ## Files
 
 - **New:** `EditorMenuCommands.swift`, `ProjectSceneCatalog.swift`.
-- **To remove:** `ToolbarView.swift` (left empty) → `git rm`.
+- **Removed:** `ToolbarView.swift` (its actions now live in the native menu bar and the Scene Graph play button).
 
 ## Keyboard shortcuts
 
