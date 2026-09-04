@@ -17,6 +17,9 @@
 
     private final class EditorInputTargetViewRef {
         weak var view: NSView?
+        /// Set when a left-button press landed on the canvas, so the drag that
+        /// follows keeps feeding the canvas even if the pointer leaves it.
+        var isTrackingLeftMouseDrag = false
     }
 
     private let editorInputTargetViewRef = EditorInputTargetViewRef()
@@ -65,7 +68,12 @@
                     return event
                 }
 
-                if self?.shouldHandleKey(event) == true {
+                // Game/camera keys only belong to the canvas while it is the
+                // frontmost view under the pointer; an overlay such as the
+                // project gallery must not drive the camera behind it.
+                if self?.shouldHandleKey(event) == true,
+                   self?.isPointerOverEditorInputView() == true
+                {
                     self?.keyPressed(event.keyCode)
                     return nil // Mark event as handled
                 }
@@ -73,6 +81,8 @@
             }
 
             NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+                // Releases are never gated by hover so a key pressed over the
+                // canvas cannot get stuck down after the pointer moves away.
                 if self?.shouldHandleKey(event) == true {
                     self?.keyReleased(event.keyCode)
                     return nil // Mark event as handled
@@ -81,16 +91,27 @@
             }
 
             NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
-                self?.leftMouseDown(event)
+                guard let self, self.isEventInsideEditorInputView(event) else {
+                    editorInputTargetViewRef.isTrackingLeftMouseDrag = false
+                    return event
+                }
+                editorInputTargetViewRef.isTrackingLeftMouseDrag = true
+                self.leftMouseDown(event)
                 return event
             }
 
             NSEvent.addLocalMonitorForEvents(matching: .leftMouseDragged) { [weak self] event in
+                guard editorInputTargetViewRef.isTrackingLeftMouseDrag else {
+                    return event
+                }
                 self?.leftMouseDragged(simd_float2(Float(event.deltaX), Float(event.deltaY)))
                 return event
             }
 
             NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp) { [weak self] event in
+                // Always clear pressed state, even for presses that started
+                // elsewhere, so the canvas never believes a button is held.
+                editorInputTargetViewRef.isTrackingLeftMouseDrag = false
                 self?.leftMouseUp(event)
                 return event
             }
@@ -162,8 +183,45 @@
                 return false
             }
 
-            let location = view.convert(event.locationInWindow, from: nil)
-            return view.bounds.contains(location)
+            return InputSystem.isEditorInputViewFrontmost(at: event.locationInWindow, in: view)
+        }
+
+        /// Whether the pointer currently sits over the visible canvas of the key
+        /// window. Used to gate key events, which carry no location of their own.
+        private func isPointerOverEditorInputView() -> Bool {
+            guard let view = editorInputTargetViewRef.view,
+                  let window = view.window,
+                  NSApp.keyWindow === window
+            else {
+                return false
+            }
+
+            let locationInWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+            return InputSystem.isEditorInputViewFrontmost(at: locationInWindow, in: view)
+        }
+
+        /// True only when the view AppKit would deliver a mouse event to at
+        /// `locationInWindow` is the canvas (or one of its subviews).
+        ///
+        /// A bounds check is not enough: SwiftUI overlays hosted in front of the
+        /// canvas (project gallery, side panels, toolbars) occupy the same
+        /// region, and their scrolling and clicks must not reach the camera.
+        /// Hit testing resolves the frontmost view, so those overlays win.
+        static func isEditorInputViewFrontmost(at locationInWindow: NSPoint, in view: NSView) -> Bool {
+            guard view.isHiddenOrHasHiddenAncestor == false,
+                  let window = view.window,
+                  let contentView = window.contentView
+            else {
+                return false
+            }
+
+            // hitTest(_:) expects the point in the receiver's superview coordinates.
+            let point = contentView.superview?.convert(locationInWindow, from: nil) ?? locationInWindow
+            guard let hitView = contentView.hitTest(point) else {
+                return false
+            }
+
+            return hitView === view || hitView.isDescendant(of: view)
         }
 
         func handlePinchGesture(_ gestureRecognizer: NSMagnificationGestureRecognizer, in _: NSView) {
