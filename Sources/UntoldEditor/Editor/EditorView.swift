@@ -1974,7 +1974,7 @@ public struct EditorView: View {
                     }
                 }
             }
-        } else if fileExtension == "ply" {
+        } else if fileExtension == "ply" || fileExtension == "untoldgs" {
             clearSceneBatches()
             GeometryStreamingSystem.shared.enabled = false
 
@@ -2366,7 +2366,7 @@ public struct EditorView: View {
                     }
                 }
             }
-        } else if fileExtension == "ply" {
+        } else if fileExtension == "ply" || fileExtension == "untoldgs" {
             clearSceneBatches()
             GeometryStreamingSystem.shared.enabled = false
 
