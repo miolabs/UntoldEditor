@@ -423,17 +423,43 @@ private struct RemoteStreamImportSheet: View {
 struct AssetBrowserView: View {
     @Binding var assets: [String: [Asset]]
     @Binding var selectedAsset: Asset?
-    @State private var selectedCategory: String? = "Models" // Default category
-    @State private var selectedAssetName: String?
+    /// Navigation lives outside the view so it survives the browser being
+    /// removed from the hierarchy (e.g. while the Console tab is showing).
+    @ObservedObject var navigation = AssetBrowserNavigationState()
     @ObservedObject var editorBaseAssetPath = EditorAssetBasePath.shared
     @ObservedObject var selectionManager: SelectionManager
     @ObservedObject var sceneGraphModel: SceneGraphModel
-    @State private var folderPathStack: [URL] = []
-    @State private var expandedDirs: Set<URL> = []
-    // Non-empty when a folder outside the fixed categories (e.g. a root-level
-    // directory the user created) is selected. Overrides the category selection.
-    @State private var selectedDirURL: URL?
-    @State private var rootExpanded: Bool = true
+
+    private var selectedCategory: String? {
+        get { navigation.selectedCategory }
+        nonmutating set { navigation.selectedCategory = newValue }
+    }
+
+    private var selectedAssetName: String? {
+        get { navigation.selectedAssetName }
+        nonmutating set { navigation.selectedAssetName = newValue }
+    }
+
+    private var folderPathStack: [URL] {
+        get { navigation.folderPathStack }
+        nonmutating set { navigation.folderPathStack = newValue }
+    }
+
+    private var expandedDirs: Set<URL> {
+        get { navigation.expandedDirs }
+        nonmutating set { navigation.expandedDirs = newValue }
+    }
+
+    private var selectedDirURL: URL? {
+        get { navigation.selectedDirURL }
+        nonmutating set { navigation.selectedDirURL = newValue }
+    }
+
+    private var rootExpanded: Bool {
+        get { navigation.rootExpanded }
+        nonmutating set { navigation.rootExpanded = newValue }
+    }
+
     @State private var showSceneLoadConfirmation = false
     @State private var pendingSceneToLoad: URL?
     @State private var showDeleteConfirmation = false

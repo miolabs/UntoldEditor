@@ -108,6 +108,55 @@ final class AssetBrowserViewTests: XCTestCase {
         _ = view
     }
 
+    func test_navigationStateDefaultsToModelsCategory() {
+        let navigation = AssetBrowserNavigationState()
+
+        XCTAssertEqual(navigation.selectedCategory, AssetCategory.models.rawValue)
+        XCTAssertNil(navigation.selectedDirURL)
+        XCTAssertNil(navigation.selectedAssetName)
+        XCTAssertTrue(navigation.folderPathStack.isEmpty)
+        XCTAssertTrue(navigation.expandedDirs.isEmpty)
+        XCTAssertTrue(navigation.rootExpanded)
+    }
+
+    /// Switching the bottom dock to Console/Tasks removes the browser from the
+    /// view tree. A rebuilt browser handed the same navigation object must land
+    /// where the user left off instead of the default category.
+    func test_rebuiltBrowserKeepsNavigationFromSharedState() {
+        var assetsState: [String: [Asset]] = ["Models": [], "HDR": []]
+        var selected: Asset? = nil
+        let navigation = AssetBrowserNavigationState()
+        let customFolder = URL(fileURLWithPath: "/tmp/Assets/Custom", isDirectory: true)
+        let subfolder = URL(fileURLWithPath: "/tmp/Assets/HDR/Skies", isDirectory: true)
+
+        // User navigates: picks a custom folder, drills into a subfolder, expands a node.
+        navigation.selectedCategory = nil
+        navigation.selectedDirURL = customFolder
+        navigation.folderPathStack = [subfolder]
+        navigation.expandedDirs = [subfolder]
+        navigation.selectedAssetName = "studio.hdr"
+        navigation.rootExpanded = false
+
+        // Tab away and back: the browser is built again with the same state object.
+        let rebuilt = AssetBrowserView(
+            assets: .init(get: { assetsState }, set: { assetsState = $0 }),
+            selectedAsset: .init(get: { selected }, set: { selected = $0 }),
+            navigation: navigation,
+            selectionManager: SelectionManager(),
+            sceneGraphModel: SceneGraphModel(),
+            searchQuery: .constant(""),
+            editor_addEntityWithAsset: {}
+        )
+
+        XCTAssertTrue(rebuilt.navigation === navigation)
+        XCTAssertNil(rebuilt.navigation.selectedCategory)
+        XCTAssertEqual(rebuilt.navigation.selectedDirURL, customFolder)
+        XCTAssertEqual(rebuilt.navigation.folderPathStack, [subfolder])
+        XCTAssertEqual(rebuilt.navigation.expandedDirs, [subfolder])
+        XCTAssertEqual(rebuilt.navigation.selectedAssetName, "studio.hdr")
+        XCTAssertFalse(rebuilt.navigation.rootExpanded)
+    }
+
     func test_loadAssetsFromDisk() throws {
         try withTempDirectory { base in
             // Create category directories
