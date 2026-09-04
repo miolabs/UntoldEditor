@@ -70,6 +70,9 @@ public struct EditorView: View {
     @State private var showSceneSwitchAlert = false
     @State private var assets: [String: [Asset]] = [:]
     @State private var selectedAsset: Asset? = nil
+    /// Kept here so the Content browser returns to the same folder after the
+    /// bottom dock shows another tab (which removes the browser view).
+    @StateObject private var assetBrowserNavigation = AssetBrowserNavigationState()
     @State private var isPlaying = false
     @State private var showCreateProject = false
     @State private var bottomPanelTab: BottomPanelTab = .assets
@@ -775,6 +778,7 @@ public struct EditorView: View {
                     AssetBrowserView(
                         assets: $assets,
                         selectedAsset: $selectedAsset,
+                        navigation: assetBrowserNavigation,
                         selectionManager: selectionManager,
                         sceneGraphModel: sceneGraphModel,
                         searchQuery: $bottomSearchQuery,
