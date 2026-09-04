@@ -12,7 +12,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import UntoldEngine
 
-private let runtimeAssetExtension = "untold"
+let runtimeAssetExtension = "untold"
 private let runtimeTextureFolderNames = ["Textures", "textures"]
 private let sourceAssetExtensions: Set<String> = ["usd", "usda", "usdc", "usdz", "blend"]
 private let streamModelResourceFolderNames = ["tile_exports", "tile_export", "Textures", "textures"]
@@ -2097,6 +2097,9 @@ struct AssetBrowserView: View {
         VStack(alignment: .leading, spacing: spacing) {
             ForEach(assets) { asset in
                 assetRow(asset)
+                    // Rows drag into the viewport or the hierarchy; the drop decides
+                    // whether the asset can be placed (see AssetPlacement.swift).
+                    .draggable(AssetDragPayload(asset: asset))
                     .contextMenu {
                         if asset.category == AssetCategory.gaussians.rawValue,
                            asset.path.pathExtension.lowercased() == "ply"
@@ -2517,66 +2520,11 @@ struct AssetBrowserView: View {
         let filename = asset.path.deletingPathExtension().lastPathComponent
         let withExtension = asset.path.pathExtension
 
-        // Handle model files (.untold runtime assets)
-        if asset.category == AssetCategory.models.rawValue,
-           withExtension.lowercased() == runtimeAssetExtension
-        {
-            // Create entity
-            let entityId = createEntity()
-
-            // Use a generated name to avoid duplicate names when importing repeatedly
-            let uniqueName = generateEntityName()
-            setEntityName(entityId: entityId, name: uniqueName)
-
-            // Add mesh to entity asynchronously
-            setEntityMeshAsync(entityId: entityId, filename: filename, withExtension: withExtension) { success in
-                if success {
-                    print("✅ Model imported: \(uniqueName)")
-                } else {
-                    print("⚠️ Failed to load model, using fallback: \(uniqueName)")
-                }
-                // Refresh scene hierarchy after loading completes
-                sceneGraphModel.refreshHierarchy()
-            }
-
-            // Select the newly created entity in the editor
-            selectionManager.selectedEntity = entityId
-
-            showStatus("Importing model: \(uniqueName)...")
-        }
-        // Handle Gaussian files (.ply source, or baked .untoldgs single file / progressive tiers)
-        else if asset.category == AssetCategory.gaussians.rawValue,
-                ["ply", "untoldgs"].contains(withExtension.lowercased())
-        {
-            // Create entity
-            let entityId = createEntity()
-
-            // Use a generated name to avoid duplicate names when importing repeatedly
-            let uniqueName = generateEntityName()
-            setEntityName(entityId: entityId, name: uniqueName)
-
-            // Add Gaussian component to entity. A `<name>_lodN.untoldgs` tier stands for the
-            // whole progressive set; the engine loads the coarsest tier first.
-            if withExtension.lowercased() == "untoldgs", let tiers = progressiveGaussianTiers(for: asset.path) {
-                setEntityGaussian(
-                    entityId: entityId,
-                    source: .progressive(
-                        baseFilename: tiers.baseURL.path,
-                        levelCount: tiers.levelCount,
-                        maxDistances: defaultGaussianLODDistances(levelCount: tiers.levelCount)
-                    )
-                )
-            } else {
-                setEntityGaussian(entityId: entityId, filename: filename, withExtension: withExtension)
-            }
-
-            // Refresh the scene hierarchy to show the new entity
-            sceneGraphModel.refreshHierarchy()
-
-            // Select the newly created entity in the editor
-            selectionManager.selectedEntity = entityId
-
-            showStatus("Queued Gaussian import: \(uniqueName) (see Console)")
+        // Models (.untold) and Gaussian splats (.ply, or baked .untoldgs single file /
+        // progressive tiers) take the same path as a drag-and-drop onto the scene.
+        if let placeable = placeableAsset(for: asset) {
+            let placement = placeAsset(placeable, sceneGraphModel: sceneGraphModel, selectionManager: selectionManager)
+            showStatus(placement.statusMessage)
         }
         // Handle Animation files (.untold runtime assets in Animations category)
         else if asset.category == AssetCategory.animations.rawValue,
