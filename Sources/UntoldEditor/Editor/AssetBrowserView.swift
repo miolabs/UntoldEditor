@@ -1261,6 +1261,10 @@ struct AssetBrowserView: View {
 
         isExportingRuntimeAsset = true
         showStatus("Exporting \(request.sourceURL.lastPathComponent)...")
+        let task = TaskCenter.begin(
+            "Exporting \(request.sourceURL.lastPathComponent)",
+            detail: "export-untold → \(request.outputURL.lastPathComponent)"
+        )
         let convertOrientation = exportConvertOrientation
         let sourceOrientation = exportSourceOrientation
         let compressGeometry = exportCompressGeometry
@@ -1272,6 +1276,7 @@ struct AssetBrowserView: View {
             let tempDirectory = FileManager.default.temporaryDirectory
             let outputLogURL = tempDirectory.appendingPathComponent("untold-export-\(UUID().uuidString).out")
             let errorLogURL = tempDirectory.appendingPathComponent("untold-export-\(UUID().uuidString).err")
+            task.attach(process: process)
 
             do {
                 try FileManager.default.createDirectory(at: request.destinationFolder, withIntermediateDirectories: true)
@@ -1323,13 +1328,15 @@ struct AssetBrowserView: View {
                     }
                 }
 
-                let exportSucceeded = process.terminationStatus == 0
+                let wasCancelled = task.isCancelRequested
+                let exportSucceeded = process.terminationStatus == 0 && !wasCancelled
 
                 if exportSucceeded, compressTextures {
                     let texturesDir = request.destinationFolder.appendingPathComponent("Textures")
                     if FileManager.default.fileExists(atPath: texturesDir.path),
                        let texbakeScript = findTexbakeScript()
                     {
+                        task.setDetail("Baking textures (ASTC)…")
                         DispatchQueue.main.async { showStatus("Baking textures (ASTC)...") }
                         let bakeResult = runTexbakeStep(script: texbakeScript, arguments: ["--dir", texturesDir.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
@@ -1341,6 +1348,7 @@ struct AssetBrowserView: View {
                             }
                         }
 
+                        task.setDetail("Patching texture references…")
                         DispatchQueue.main.async { showStatus("Patching texture references...") }
                         let patchResult = runTexbakeStep(script: texbakeScript, arguments: ["--patch-refs", request.outputURL.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
@@ -1361,10 +1369,23 @@ struct AssetBrowserView: View {
                     }
                 }
 
+                if wasCancelled {
+                    // Don't leave a half-written runtime asset behind.
+                    try? FileManager.default.removeItem(at: request.outputURL)
+                    task.markCancelled("Cancelled by user")
+                } else if exportSucceeded {
+                    task.succeed("Wrote \(request.outputURL.lastPathComponent)")
+                } else {
+                    task.fail("export-untold exited with status \(process.terminationStatus) (see Console)")
+                }
+
                 DispatchQueue.main.async {
                     isExportingRuntimeAsset = false
                     pendingRuntimeExport = nil
-                    if exportSucceeded {
+                    if wasCancelled {
+                        Logger.log(message: "Export cancelled for \(request.sourceURL.lastPathComponent)")
+                        showStatus("Export cancelled")
+                    } else if exportSucceeded {
                         loadAssets()
                         showStatus("Exported \(request.outputURL.lastPathComponent)")
                     } else {
@@ -1373,6 +1394,7 @@ struct AssetBrowserView: View {
                     presentNextRuntimeExportIfNeeded()
                 }
             } catch {
+                task.fail(error.localizedDescription)
                 DispatchQueue.main.async {
                     isExportingRuntimeAsset = false
                     pendingRuntimeExport = nil
@@ -1546,6 +1568,10 @@ struct AssetBrowserView: View {
 
         isExportingTilesAsset = true
         showStatus("Exporting tiles for \(request.sourceURL.lastPathComponent)...")
+        let task = TaskCenter.begin(
+            "Exporting tiles for \(request.sourceURL.lastPathComponent)",
+            detail: "export-untold-tiles → \(request.outputDirURL.lastPathComponent)/"
+        )
         let tileSizeX = exportTileSizeX
         let tileSizeY = exportTileSizeY
         let tileSizeZ = exportTileSizeZ
@@ -1563,6 +1589,7 @@ struct AssetBrowserView: View {
             let tempDirectory = FileManager.default.temporaryDirectory
             let outputLogURL = tempDirectory.appendingPathComponent("untold-tiles-export-\(UUID().uuidString).out")
             let errorLogURL = tempDirectory.appendingPathComponent("untold-tiles-export-\(UUID().uuidString).err")
+            task.attach(process: process)
 
             do {
                 try FileManager.default.createDirectory(at: request.destinationFolder, withIntermediateDirectories: true)
@@ -1628,13 +1655,15 @@ struct AssetBrowserView: View {
                     }
                 }
 
-                let exportSucceeded = process.terminationStatus == 0
+                let wasCancelled = task.isCancelRequested
+                let exportSucceeded = process.terminationStatus == 0 && !wasCancelled
 
                 if exportSucceeded, compressTextures {
                     let texturesDir = request.outputDirURL.appendingPathComponent("Textures")
                     if FileManager.default.fileExists(atPath: texturesDir.path),
                        let texbakeScript = findTexbakeScript()
                     {
+                        task.setDetail("Baking textures (ASTC)…")
                         DispatchQueue.main.async { showStatus("Baking textures (ASTC)...") }
                         let bakeResult = runTexbakeStep(script: texbakeScript, arguments: ["--dir", texturesDir.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
@@ -1646,6 +1675,7 @@ struct AssetBrowserView: View {
                             }
                         }
 
+                        task.setDetail("Patching texture references…")
                         DispatchQueue.main.async { showStatus("Patching texture references...") }
                         let patchResult = runTexbakeStep(script: texbakeScript, arguments: ["--patch-refs", request.outputDirURL.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
@@ -1666,10 +1696,21 @@ struct AssetBrowserView: View {
                     }
                 }
 
+                if wasCancelled {
+                    task.markCancelled("Cancelled by user")
+                } else if exportSucceeded {
+                    task.succeed("Wrote tiles to \(request.outputDirURL.lastPathComponent)/")
+                } else {
+                    task.fail("export-untold-tiles exited with status \(process.terminationStatus) (see Console)")
+                }
+
                 DispatchQueue.main.async {
                     isExportingTilesAsset = false
                     pendingTilesExport = nil
-                    if exportSucceeded {
+                    if wasCancelled {
+                        Logger.log(message: "Tiles export cancelled for \(request.sourceURL.lastPathComponent)")
+                        showStatus("Tiles export cancelled")
+                    } else if exportSucceeded {
                         loadAssets()
                         showStatus("Exported tiles for \(request.sourceURL.deletingPathExtension().lastPathComponent)")
                     } else {
@@ -1678,6 +1719,7 @@ struct AssetBrowserView: View {
                     presentNextTilesExportIfNeeded()
                 }
             } catch {
+                task.fail(error.localizedDescription)
                 DispatchQueue.main.async {
                     isExportingTilesAsset = false
                     pendingTilesExport = nil
@@ -1798,10 +1840,16 @@ struct AssetBrowserView: View {
         let settings = gaussianCookSettings
         isCookingGaussian = true
         showStatus("Cooking \(asset.name)...")
+        // The in-process baker has no cancellation hook, so this task is tracked but not cancellable.
+        let task = TaskCenter.begin(
+            "Cooking \(asset.name)",
+            detail: settings.levelCount > 1 ? "\(settings.levelCount) progressive tiers → .untoldgs" : "→ .untoldgs"
+        )
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 let result = try cookGaussianPLY(plyURL: asset.path, settings: settings)
                 let report = result.cookReport
+                task.succeed("Kept \(report.keptSplatCount) of \(report.inputSplatCount) splats")
                 DispatchQueue.main.async {
                     isCookingGaussian = false
                     pendingGaussianCookAsset = nil
@@ -1811,6 +1859,7 @@ struct AssetBrowserView: View {
                     Logger.log(message: "Cooked \(asset.name): kept \(report.keptSplatCount) of \(report.inputSplatCount) (opacity \(report.prunedByOpacity), degenerate \(report.prunedByDegenerateGeometry), crop \(report.prunedByCrop)), SH degree \(report.shDegree)")
                 }
             } catch {
+                task.fail("\(error)")
                 DispatchQueue.main.async {
                     isCookingGaussian = false
                     pendingGaussianCookAsset = nil
