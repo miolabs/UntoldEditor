@@ -443,6 +443,10 @@ struct AssetBrowserView: View {
     @State private var showImportMenu = false
     @State private var showRemoteStreamSheet = false
     @State private var remoteStreamURLString = ""
+    @State private var showGaussianCookSheet = false
+    @State private var pendingGaussianCookAsset: Asset?
+    @State private var gaussianCookSettings = GaussianCookSettings()
+    @State private var isCookingGaussian = false
     @State private var pendingRuntimeExport: RuntimeExportRequest?
     @State private var runtimeExportQueue: [RuntimeExportRequest] = []
     @State private var isExportingRuntimeAsset = false
@@ -485,8 +489,12 @@ struct AssetBrowserView: View {
     /// selection wins, otherwise the open subfolder, otherwise the selected
     /// category's root folder.
     private var currentDirectoryURL: URL? {
-        if let generic = selectedDirURL { return generic }
-        if let folder = currentFolderPath { return folder }
+        if let generic = selectedDirURL {
+            return generic
+        }
+        if let folder = currentFolderPath {
+            return folder
+        }
         guard let raw = selectedCategory, let category = AssetCategory(rawValue: raw) else { return nil }
         return categoryRootURL(category)
     }
@@ -515,7 +523,11 @@ struct AssetBrowserView: View {
     }
 
     private func toggleDir(_ url: URL) {
-        if expandedDirs.contains(url) { expandedDirs.remove(url) } else { expandedDirs.insert(url) }
+        if expandedDirs.contains(url) {
+            expandedDirs.remove(url)
+        } else {
+            expandedDirs.insert(url)
+        }
     }
 
     private func isDirectorySelected(url: URL, category: String) -> Bool {
@@ -594,7 +606,9 @@ struct AssetBrowserView: View {
         let isGeneric = (category == nil)
         let subfolders: [URL] = {
             guard let url else { return [] }
-            if category == AssetCategory.scripts.rawValue { return [] }
+            if category == AssetCategory.scripts.rawValue {
+                return []
+            }
             return subdirectories(of: url)
         }()
         let hasChildren = !subfolders.isEmpty
@@ -604,14 +618,20 @@ struct AssetBrowserView: View {
                 guard let url, let sel = selectedDirURL else { return false }
                 return sel.standardizedFileURL == url.standardizedFileURL
             }
-            if let url { return isDirectorySelected(url: url, category: category!) }
+            if let url {
+                return isDirectorySelected(url: url, category: category!)
+            }
             return selectedDirURL == nil && selectedCategory == category && folderPathStack.isEmpty
         }()
 
         return AnyView(
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Button(action: { if let url { toggleDir(url) } }) {
+                    Button(action: {
+                        if let url {
+                            toggleDir(url)
+                        }
+                    }) {
                         Image(systemName: hasChildren ? (isExpanded ? "chevron.down" : "chevron.right") : "chevron.right")
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundColor(hasChildren ? .editorTextSecondary : .clear)
@@ -733,7 +753,9 @@ struct AssetBrowserView: View {
                         .padding()
                 } else {
                     assetRowList(filtered, spacing: 4) { asset in
-                        if !isScripts { folderPathStack.append(asset.path) }
+                        if !isScripts {
+                            folderPathStack.append(asset.path)
+                        }
                     }
                 }
             } else {
@@ -884,6 +906,22 @@ struct AssetBrowserView: View {
         .sheet(item: $pendingTilesExport) { request in
             tilesExportSheet(for: request)
         }
+        .sheet(isPresented: $showGaussianCookSheet) {
+            GaussianCookSheet(
+                sourceName: pendingGaussianCookAsset?.name ?? "",
+                settings: $gaussianCookSettings,
+                onCook: {
+                    showGaussianCookSheet = false
+                    if let asset = pendingGaussianCookAsset {
+                        cookGaussianAsset(asset)
+                    }
+                },
+                onCancel: {
+                    showGaussianCookSheet = false
+                    pendingGaussianCookAsset = nil
+                }
+            )
+        }
         .sheet(isPresented: $showRemoteStreamSheet) {
             RemoteStreamImportSheet(urlString: $remoteStreamURLString) {
                 saveRemoteStream(loadImmediately: true)
@@ -929,7 +967,7 @@ struct AssetBrowserView: View {
         case .scenes:
             openPanel.allowedContentTypes = [.untoldScene]
         case .gaussians:
-            openPanel.allowedContentTypes = [UTType(filenameExtension: "ply")!]
+            openPanel.allowedContentTypes = [UTType(filenameExtension: "ply")!, UTType(filenameExtension: "untoldgs")!]
         case .materials:
             openPanel.allowedContentTypes = [.png, .jpeg, .tiff]
         case .hdr:
@@ -958,26 +996,34 @@ struct AssetBrowserView: View {
                     case "HDR":
                         // Copy .hdr directly into HDR folder
                         let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent)
-                        if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
+                        if fm.fileExists(atPath: destURL.path) {
+                            try fm.removeItem(at: destURL)
+                        }
                         try fm.copyItem(at: sourceURL, to: destURL)
 
                     case "Gaussians":
                         // Copy Gaussian files directly into Gaussians folder
                         let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent)
-                        if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
+                        if fm.fileExists(atPath: destURL.path) {
+                            try fm.removeItem(at: destURL)
+                        }
                         try fm.copyItem(at: sourceURL, to: destURL)
 
                     case "Materials":
                         if sourceURL.hasDirectoryPath {
                             // Copy entire material folder (recommended)
                             let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
-                            if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
+                            if fm.fileExists(atPath: destURL.path) {
+                                try fm.removeItem(at: destURL)
+                            }
                             try fm.copyItem(at: sourceURL, to: destURL)
                         } else {
                             // Single texture fallback → create folder named after the file (without ext)
                             let baseName = sourceURL.deletingPathExtension().lastPathComponent
                             let materialFolder = categoryRoot.appendingPathComponent(baseName, isDirectory: true)
-                            if fm.fileExists(atPath: materialFolder.path) { try fm.removeItem(at: materialFolder) }
+                            if fm.fileExists(atPath: materialFolder.path) {
+                                try fm.removeItem(at: materialFolder)
+                            }
                             try fm.createDirectory(at: materialFolder, withIntermediateDirectories: true)
                             let destFile = materialFolder.appendingPathComponent(sourceURL.lastPathComponent)
                             try fm.copyItem(at: sourceURL, to: destFile)
@@ -1011,12 +1057,16 @@ struct AssetBrowserView: View {
                             }
 
                             let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
-                            if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
+                            if fm.fileExists(atPath: destURL.path) {
+                                try fm.removeItem(at: destURL)
+                            }
                             try fm.copyItem(at: sourceURL, to: destURL)
                         } else if isTiledSceneManifest(sourceURL) {
                             let baseName = sourceURL.deletingPathExtension().lastPathComponent
                             let destFolder = categoryRoot.appendingPathComponent(baseName, isDirectory: true)
-                            if fm.fileExists(atPath: destFolder.path) { try fm.removeItem(at: destFolder) }
+                            if fm.fileExists(atPath: destFolder.path) {
+                                try fm.removeItem(at: destFolder)
+                            }
                             try importStreamModelManifest(sourceURL: sourceURL, destinationFolder: destFolder, fileManager: fm)
                         } else {
                             showStatus("Selected JSON is not a tiled scene manifest", isError: true)
@@ -1025,13 +1075,17 @@ struct AssetBrowserView: View {
                     case "Scenes":
                         // Copy Scenes files directly into Scenes folder
                         let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent)
-                        if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
+                        if fm.fileExists(atPath: destURL.path) {
+                            try fm.removeItem(at: destURL)
+                        }
                         try fm.copyItem(at: sourceURL, to: destURL)
 
                     case "Scripts":
                         // Copy Scripts files directly into Scripts folder
                         let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent)
-                        if fm.fileExists(atPath: destURL.path) { try fm.removeItem(at: destURL) }
+                        if fm.fileExists(atPath: destURL.path) {
+                            try fm.removeItem(at: destURL)
+                        }
                         try fm.copyItem(at: sourceURL, to: destURL)
 
                     default:
@@ -1261,8 +1315,12 @@ struct AssetBrowserView: View {
                 let stderr = (try? String(contentsOf: errorLogURL, encoding: .utf8)) ?? ""
 
                 DispatchQueue.main.async {
-                    if !stdout.isEmpty { Logger.log(message: stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                    if !stderr.isEmpty { Logger.log(message: stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    if !stdout.isEmpty {
+                        Logger.log(message: stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    if !stderr.isEmpty {
+                        Logger.log(message: stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
                 }
 
                 let exportSucceeded = process.terminationStatus == 0
@@ -1275,15 +1333,23 @@ struct AssetBrowserView: View {
                         DispatchQueue.main.async { showStatus("Baking textures (ASTC)...") }
                         let bakeResult = runTexbakeStep(script: texbakeScript, arguments: ["--dir", texturesDir.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
-                            if !bakeResult.stdout.isEmpty { Logger.log(message: bakeResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                            if !bakeResult.stderr.isEmpty { Logger.log(message: bakeResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                            if !bakeResult.stdout.isEmpty {
+                                Logger.log(message: bakeResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
+                            if !bakeResult.stderr.isEmpty {
+                                Logger.log(message: bakeResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
                         }
 
                         DispatchQueue.main.async { showStatus("Patching texture references...") }
                         let patchResult = runTexbakeStep(script: texbakeScript, arguments: ["--patch-refs", request.outputURL.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
-                            if !patchResult.stdout.isEmpty { Logger.log(message: patchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                            if !patchResult.stderr.isEmpty { Logger.log(message: patchResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                            if !patchResult.stdout.isEmpty {
+                                Logger.log(message: patchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
+                            if !patchResult.stderr.isEmpty {
+                                Logger.log(message: patchResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
                             if bakeResult.status != 0 || patchResult.status != 0 {
                                 Logger.log(message: "⚠️ ASTC compression had errors — asset imported without compressed textures")
                             }
@@ -1554,8 +1620,12 @@ struct AssetBrowserView: View {
                 let stderr = (try? String(contentsOf: errorLogURL, encoding: .utf8)) ?? ""
 
                 DispatchQueue.main.async {
-                    if !stdout.isEmpty { Logger.log(message: stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                    if !stderr.isEmpty { Logger.log(message: stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    if !stdout.isEmpty {
+                        Logger.log(message: stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    if !stderr.isEmpty {
+                        Logger.log(message: stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
                 }
 
                 let exportSucceeded = process.terminationStatus == 0
@@ -1568,15 +1638,23 @@ struct AssetBrowserView: View {
                         DispatchQueue.main.async { showStatus("Baking textures (ASTC)...") }
                         let bakeResult = runTexbakeStep(script: texbakeScript, arguments: ["--dir", texturesDir.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
-                            if !bakeResult.stdout.isEmpty { Logger.log(message: bakeResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                            if !bakeResult.stderr.isEmpty { Logger.log(message: bakeResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                            if !bakeResult.stdout.isEmpty {
+                                Logger.log(message: bakeResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
+                            if !bakeResult.stderr.isEmpty {
+                                Logger.log(message: bakeResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
                         }
 
                         DispatchQueue.main.async { showStatus("Patching texture references...") }
                         let patchResult = runTexbakeStep(script: texbakeScript, arguments: ["--patch-refs", request.outputDirURL.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
-                            if !patchResult.stdout.isEmpty { Logger.log(message: patchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                            if !patchResult.stderr.isEmpty { Logger.log(message: patchResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                            if !patchResult.stdout.isEmpty {
+                                Logger.log(message: patchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
+                            if !patchResult.stderr.isEmpty {
+                                Logger.log(message: patchResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
                             if bakeResult.status != 0 || patchResult.status != 0 {
                                 Logger.log(message: "⚠️ ASTC compression had errors — tiles imported without compressed textures")
                             }
@@ -1714,6 +1792,34 @@ struct AssetBrowserView: View {
         return asset.name.localizedCaseInsensitiveContains(query)
     }
 
+    /// Bakes a Gaussian .ply into .untoldgs tier(s) beside it through the engine's baker,
+    /// off the main thread, then refreshes the browser so the new file(s) appear.
+    private func cookGaussianAsset(_ asset: Asset) {
+        let settings = gaussianCookSettings
+        isCookingGaussian = true
+        showStatus("Cooking \(asset.name)...")
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let result = try cookGaussianPLY(plyURL: asset.path, settings: settings)
+                let report = result.cookReport
+                DispatchQueue.main.async {
+                    isCookingGaussian = false
+                    pendingGaussianCookAsset = nil
+                    loadAssets()
+                    let names = result.tiers.map(\.url.lastPathComponent).joined(separator: ", ")
+                    showStatus("Cooked \(report.keptSplatCount) of \(report.inputSplatCount) splats → \(names)")
+                    Logger.log(message: "Cooked \(asset.name): kept \(report.keptSplatCount) of \(report.inputSplatCount) (opacity \(report.prunedByOpacity), degenerate \(report.prunedByDegenerateGeometry), crop \(report.prunedByCrop)), SH degree \(report.shDegree)")
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    isCookingGaussian = false
+                    pendingGaussianCookAsset = nil
+                    showStatus("Cook failed: \(error)", isError: true)
+                }
+            }
+        }
+    }
+
     private func showStatus(_ message: String, isError: Bool = false) {
         statusMessage = message
         statusIsError = isError
@@ -1767,6 +1873,17 @@ struct AssetBrowserView: View {
             ForEach(assets) { asset in
                 assetRow(asset)
                     .contextMenu {
+                        if asset.category == AssetCategory.gaussians.rawValue,
+                           asset.path.pathExtension.lowercased() == "ply"
+                        {
+                            Button {
+                                pendingGaussianCookAsset = asset
+                                showGaussianCookSheet = true
+                            } label: {
+                                Label("Cook to .untoldgs…", systemImage: "sparkles")
+                            }
+                            .disabled(isCookingGaussian)
+                        }
                         Button(role: .destructive) {
                             pendingDeleteAsset = asset
                             showDeleteConfirmation = true
@@ -1798,7 +1915,7 @@ struct AssetBrowserView: View {
                     if isDir.boolValue {
                         return Asset(name: item.lastPathComponent, category: itemCategory, path: item, isFolder: true)
                     } else {
-                        let allowedExtensions: Set<String> = [runtimeAssetExtension, "utex", "png", "jpg", "jpeg", "hdr", "exr", "tif", "tiff", "ply", "json", "uscript", "remotestream"]
+                        let allowedExtensions: Set<String> = [runtimeAssetExtension, "utex", "png", "jpg", "jpeg", "hdr", "exr", "tif", "tiff", "ply", "untoldgs", "json", "uscript", "remotestream"]
                         guard allowedExtensions.contains(item.pathExtension.lowercased()) else { return nil }
 
                         return Asset(name: item.lastPathComponent,
@@ -2172,9 +2289,9 @@ struct AssetBrowserView: View {
 
             showStatus("Importing model: \(uniqueName)...")
         }
-        // Handle Gaussian files (ply)
+        // Handle Gaussian files (.ply source, or baked .untoldgs single file / progressive tiers)
         else if asset.category == AssetCategory.gaussians.rawValue,
-                withExtension.lowercased() == "ply"
+                ["ply", "untoldgs"].contains(withExtension.lowercased())
         {
             // Create entity
             let entityId = createEntity()
@@ -2183,8 +2300,20 @@ struct AssetBrowserView: View {
             let uniqueName = generateEntityName()
             setEntityName(entityId: entityId, name: uniqueName)
 
-            // Add Gaussian component to entity
-            setEntityGaussian(entityId: entityId, filename: filename, withExtension: withExtension)
+            // Add Gaussian component to entity. A `<name>_lodN.untoldgs` tier stands for the
+            // whole progressive set; the engine loads the coarsest tier first.
+            if withExtension.lowercased() == "untoldgs", let tiers = progressiveGaussianTiers(for: asset.path) {
+                setEntityGaussian(
+                    entityId: entityId,
+                    source: .progressive(
+                        baseFilename: tiers.baseURL.path,
+                        levelCount: tiers.levelCount,
+                        maxDistances: defaultGaussianLODDistances(levelCount: tiers.levelCount)
+                    )
+                )
+            } else {
+                setEntityGaussian(entityId: entityId, filename: filename, withExtension: withExtension)
+            }
 
             // Refresh the scene hierarchy to show the new entity
             sceneGraphModel.refreshHierarchy()
