@@ -464,6 +464,16 @@ struct InspectorView: View {
                                 Divider()
                             }
 
+                            // Splat Twin: the mesh's link to its cooked .untoldgs stand-in, stored in
+                            // the .untold asset itself. An ad-hoc section (not a ComponentOption_Editor)
+                            // so scene-composition mode, which hides the Gaussian editor, keeps it.
+                            if GaussianTwinInspector.isAvailable(entityId) {
+                                GaussianTwinInspectorView(entityId: entityId, asset: selectedAsset, refreshView: refreshView)
+                                    .frame(minWidth: 200, maxWidth: 250)
+                                    .id(entityId)
+                                Divider()
+                            }
+
                             let addableComponents = availableComponentsWithFlags()
                             if addableComponents.isEmpty == false {
                                 Menu {
