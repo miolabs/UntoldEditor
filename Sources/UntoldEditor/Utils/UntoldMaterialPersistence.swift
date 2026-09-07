@@ -75,7 +75,7 @@ private func resolveUntoldMaterialTarget(entityId: EntityID, meshIndex: Int) thr
     return UntoldMaterialTarget(assetURL: assetURL, materialIndex: materialIndex)
 }
 
-private func resolveEntityRecordForMesh(
+func resolveEntityRecordForMesh(
     entityId: EntityID,
     meshIndex: Int,
     decoded: UntoldDecodedAsset
