@@ -16,12 +16,16 @@ let package = Package(
         // Temporarily tracks the Gaussian splat streaming series on the fork until those engine
         // PRs land in a release; restore the exact pin afterwards.
         .package(url: "https://github.com/miolabs/UntoldEngine.git", branch: "develop"),
+        // Mesh-to-splat twin swap policy; the Inspector's Splat Twin section previews the swap
+        // in the viewport through it.
+        .package(url: "https://github.com/miolabs/UntoldGaussianTwins.git", branch: "main"),
     ],
     targets: [
         .executableTarget(
             name: "UntoldEditor",
             dependencies: [
                 .product(name: "UntoldEngine", package: "UntoldEngine"),
+                .product(name: "UntoldGaussianTwins", package: "UntoldGaussianTwins"),
             ],
             path: "Sources/UntoldEditor",
             resources: [
