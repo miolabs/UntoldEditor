@@ -8,7 +8,6 @@
 //
 
 import Foundation
-import SwiftUI
 @testable import UntoldEditor
 @testable import UntoldEngine
 import XCTest
@@ -37,17 +36,14 @@ final class GaussianTwinInspectorAvailabilityTests: XCTestCase {
     func test_meshAssetRoot_isAvailableInSceneCompositionMode() {
         XCTAssertTrue(EditorAuthoringMode.sceneCompositionOnly, "the section is gated on its own, not on the component registry")
         let entity = GaussianTwinTestFixtures.makeMeshEntity(assetURL: untold)
-        let selectionManager = SelectionManager()
-        selectionManager.selectedEntity = entity
-        var selectedAsset: Asset?
-        _ = InspectorView(
-            selectionManager: selectionManager,
-            sceneGraphModel: SceneGraphModel(),
-            onAddName_Editor: {},
-            selectedAsset: Binding(get: { selectedAsset }, set: { selectedAsset = $0 })
-        )
 
         XCTAssertTrue(GaussianTwinInspector.isAvailable(entity))
+        // The gate `InspectorView.body` uses is the policy itself, in this mode too.
+        XCTAssertTrue(InspectorView.showsGaussianTwinSection(for: entity))
+        let light = createEntity()
+        registerComponent(entityId: light, componentType: LocalTransformComponent.self)
+        registerComponent(entityId: light, componentType: DirectionalLightComponent.self)
+        XCTAssertFalse(InspectorView.showsGaussianTwinSection(for: light))
         // The registry-driven Gaussian editor stays hidden; the twin section is the only
         // splat authoring the composition-only inspector offers.
         XCTAssertFalse(canShowComponentInInspector(componentType: GaussianComponent.self, for: entity))
@@ -64,6 +60,17 @@ final class GaussianTwinInspectorAvailabilityTests: XCTestCase {
 
         let bare = GaussianTwinTestFixtures.makeAssetInstance(assetURL: hierarchy, nodePath: "Root/root_entity#0/pivot#3", withMesh: false)
         XCTAssertFalse(GaussianTwinInspector.isAvailable(bare.node), "transform-only nodes")
+    }
+
+    func test_streamedStub_isNotAvailable() throws {
+        // A streamed tile node: RenderComponent + DerivedAssetNodeComponent after upload, but
+        // its node path is the streamer's (`Root/<name>#<index>`), not the file's.
+        let hierarchy = try GaussianTwinTestFixtures.writeUntold(to: directory, name: "tile_03", hierarchy: true)
+        let placed = GaussianTwinTestFixtures.makeAssetInstance(assetURL: hierarchy, nodePath: "Root/wall#2#2")
+        XCTAssertTrue(GaussianTwinInspector.isAvailable(placed.node), "before: an ordinary mesh node")
+        registerComponent(entityId: placed.node, componentType: StreamingComponent.self)
+        XCTAssertFalse(GaussianTwinInspector.isAvailable(placed.node))
+        XCTAssertFalse(InspectorView.showsGaussianTwinSection(for: placed.node))
     }
 
     func test_lightsCamerasPrimitivesAndSplats_areNotAvailable() {

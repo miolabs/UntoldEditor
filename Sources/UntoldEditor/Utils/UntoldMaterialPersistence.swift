@@ -106,7 +106,9 @@ private func buildUntoldDecodedNodePath(
         return "Root/Unknown#\(entityID)"
     }
 
-    let entityName = (try? decoded.string(at: entity.nameOffset)) ?? "Unknown"
+    // A record without a name gets the same stand-in the engine loader gives its node
+    // (`NativeFormatLoader`), so the rebuilt path matches `DerivedAssetNodeComponent.nodePath`.
+    let entityName = (try? decoded.string(at: entity.nameOffset)) ?? "entity_\(entity.entityId)"
     let segment = "\(entityName)#\(entity.entityId)"
     if entity.parentEntityId != UntoldFormat.invalidIndex {
         let parentPath = buildUntoldDecodedNodePath(

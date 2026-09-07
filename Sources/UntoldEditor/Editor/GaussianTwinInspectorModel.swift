@@ -29,12 +29,14 @@ typealias GaussianTwinPersistScheduler = (_ delay: TimeInterval, _ action: @esca
 enum GaussianTwinInspector {
     /// The section is shown for mesh entities placed from a `.untold` file: the root of a
     /// single-node asset or a bindable mesh node of a multi-node one. Lights, cameras,
-    /// transform-only nodes, primitives, splats and multi-node roots (no mesh of their own)
-    /// get none. Cheap — it does not read the file; the model reports a file that cannot be
-    /// mapped to an entity record in its status line.
+    /// transform-only nodes, primitives, splats, multi-node roots (no mesh of their own) and
+    /// streamed stubs (their node paths are the streamer's, not the file's) get none. Cheap —
+    /// it does not read the file; the model reports a file that cannot be mapped to an entity
+    /// record in its status line.
     static func isAvailable(_ entityId: EntityID) -> Bool {
         guard entityId != .invalid,
               hasComponent(entityId: entityId, componentType: RenderComponent.self),
+              !hasComponent(entityId: entityId, componentType: StreamingComponent.self),
               !hasComponent(entityId: entityId, componentType: CameraComponent.self),
               !hasComponent(entityId: entityId, componentType: DirectionalLightComponent.self),
               !hasComponent(entityId: entityId, componentType: PointLightComponent.self),
@@ -119,6 +121,9 @@ final class GaussianTwinInspectorModel: ObservableObject {
     private let undoManager: EditorUndoManager
     private var cancelPendingPersist: GaussianTwinPersistCancel?
     private var changeObserver: NSObjectProtocol?
+    /// The target's decoded file, kept so live edits can find the other placements of the
+    /// record without reading it again; refreshed by `reload()`.
+    private var decoded: UntoldDecodedAsset?
 
     init(
         entityId: EntityID,
@@ -130,13 +135,15 @@ final class GaussianTwinInspectorModel: ObservableObject {
         self.undoManager = undoManager
         reload()
         // Delivered on the posting thread (always main here), so a write made through the
-        // undo stack is reflected before the caller returns.
+        // undo stack is reflected before the caller returns. The model's own writes name it as
+        // the object and are skipped: `link` already says what was written.
         changeObserver = NotificationCenter.default.addObserver(
             forName: .gaussianTwinLinkDidChange,
             object: nil,
             queue: nil
         ) { [weak self] notification in
             guard let self,
+                  (notification.object as AnyObject?) !== self,
                   let changed = notification.userInfo?[GaussianTwinLinkPersistence.targetUserInfoKey] as? GaussianTwinLinkTarget,
                   changed == target
             else { return }
@@ -153,15 +160,18 @@ final class GaussianTwinInspectorModel: ObservableObject {
 
     // MARK: - Reading
 
-    /// Resolves the target and reads the link from the file. Clears the status.
+    /// Resolves the target and reads the link from the file (one read, one decode). Clears
+    /// the status.
     func reload() {
         do {
-            let resolved = try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: entityId)
-            target = resolved
-            link = try GaussianTwinLinkPersistence.readTwinLink(target: resolved)
+            let loaded = try GaussianTwinLinkPersistence.loadTarget(entityId: entityId)
+            target = loaded.target
+            decoded = loaded.decoded
+            link = try GaussianTwinLinkPersistence.readTwinLink(target: loaded.target, decoded: loaded.decoded)
             status = nil
         } catch {
             target = nil
+            decoded = nil
             link = nil
             status = Status(message: error.localizedDescription, isError: true)
         }
@@ -220,13 +230,13 @@ final class GaussianTwinInspectorModel: ObservableObject {
                 exposureOffsetEV: previous?.exposureOffsetEV ?? 0
             )
             cancelScheduledPersist()
-            try GaussianTwinLinkPersistence.writeTwinLink(target: target, link: newLink)
+            try GaussianTwinLinkPersistence.writeTwinLink(target: target, link: newLink, writer: self)
             link = newLink
             registerUndo(name: "Assign Splat Twin", from: previous, to: newLink)
             let splats = newLink.lodSplatCounts.first ?? 0
             var message = "Linked \(payloadURL.lastPathComponent) (\(splats.formatted()) splats)."
             if stored.isRelative == false {
-                message += " Stored by file name only: keep it next to \(target.untoldURL.lastPathComponent)."
+                message += " Stored by file name only (another volume): keep it next to \(target.untoldURL.lastPathComponent)."
             }
             status = Status(message: message, isError: false)
         } catch {
@@ -239,7 +249,7 @@ final class GaussianTwinInspectorModel: ObservableObject {
         guard let target, let previous = link else { return }
         cancelScheduledPersist()
         do {
-            try GaussianTwinLinkPersistence.removeTwinLink(target: target)
+            try GaussianTwinLinkPersistence.removeTwinLink(target: target, writer: self)
             link = nil
             registerUndo(name: "Remove Splat Twin", from: previous, to: nil)
             status = nil
@@ -281,10 +291,17 @@ final class GaussianTwinInspectorModel: ObservableObject {
 
     /// Mirrors an edited link onto the scene without touching the file.
     private func applyLive(_ link: UntoldAssetPatcher.GaussianAssetLink, target: GaussianTwinLinkTarget) {
-        for backed in GaussianTwinLinkPersistence.entitiesBacked(by: target) {
+        for backed in backedEntities(target) {
             GaussianTwinLinkPersistence.applyLinkComponent(link, to: backed, untoldURL: target.untoldURL)
             GaussianTwinLinkPersistence.applyPreview(entityId: backed)
         }
+    }
+
+    private func backedEntities(_ target: GaussianTwinLinkTarget) -> [EntityID] {
+        if let decoded {
+            return GaussianTwinLinkPersistence.entitiesBacked(by: target, decoded: decoded)
+        }
+        return GaussianTwinLinkPersistence.entitiesBacked(by: target)
     }
 
     // MARK: - Persistence
@@ -304,16 +321,34 @@ final class GaussianTwinInspectorModel: ObservableObject {
     }
 
     /// Writes the edited link now if a write is pending (the debounce fired, the section is
-    /// leaving the screen, the model is going away).
+    /// leaving the screen, the model is going away). When the write fails the scene and the
+    /// model snap back to what the file holds — the live edit would otherwise outlive the
+    /// session it was made in — and the failure is logged, since the section may be gone by
+    /// the time it is known.
     func flushPendingPersist() {
         guard hasPendingPersist else { return }
         cancelScheduledPersist()
         guard let target, let link else { return }
         do {
-            try GaussianTwinLinkPersistence.writeTwinLink(target: target, link: link)
+            try GaussianTwinLinkPersistence.writeTwinLink(target: target, link: link, writer: self)
         } catch {
+            Logger.logWarning(message: "[GaussianTwinInspector] Could not persist the twin link of \(target.untoldURL.lastPathComponent): \(error.localizedDescription)")
             status = Status(message: error.localizedDescription, isError: true)
+            revertToFile(target: target)
         }
+    }
+
+    /// Puts the model and the scene back on the persisted record. Leaves both alone when the
+    /// file cannot be read either: there is nothing to snap back to.
+    private func revertToFile(target: GaussianTwinLinkTarget) {
+        let persisted: UntoldAssetPatcher.GaussianAssetLink?
+        do {
+            persisted = try GaussianTwinLinkPersistence.readTwinLink(target: target)
+        } catch {
+            return
+        }
+        link = persisted
+        GaussianTwinLinkPersistence.applyToScene(target: target, link: persisted, decoded: decoded, writer: self)
     }
 
     /// Another writer (undo, a second inspector of the same asset) changed the record: drop

@@ -23,21 +23,47 @@ enum GaussianTwinTestFixtures {
 
     // MARK: - .untold
 
+    /// The shapes of entity table a fixture `.untold` can have.
+    enum Layout {
+        /// One mesh-bearing root `root_entity#0`, as a single-node asset is exported.
+        case singleMesh
+        /// A mesh-less root `root_entity#0` with one mesh child `child#1`; `secondChild` adds a
+        /// mesh child `child2#2`; `namelessChild` writes `child#1` without a name (nameOffset
+        /// `UntoldFormat.invalidIndex`), which the engine loader calls `entity_1`.
+        case hierarchy(secondChild: Bool = false, namelessChild: Bool = false)
+        /// Two root-level mesh records `legs#0` and `seat#1` and no hierarchy, as a re-export
+        /// that split a single-node asset in two would be laid out.
+        case twoRootMeshes
+    }
+
     /// A `.untold` tile whose entity table is one mesh-bearing root (`hierarchy == false`) or a
     /// mesh-less root `root_entity#0` with one mesh child `child#1` (`hierarchy == true`), as a
     /// multi-node asset is exported. Uncompressed chunks; content hash computed.
     @discardableResult
     static func writeUntold(to directory: URL, name: String = "Chair", hierarchy: Bool = false) throws -> URL {
+        try writeUntold(to: directory, name: name, layout: hierarchy ? .hierarchy() : .singleMesh)
+    }
+
+    @discardableResult
+    static func writeUntold(to directory: URL, name: String = "Chair", layout: Layout) throws -> URL {
         let url = directory.appendingPathComponent("\(name).untold")
-        try makeUntoldData(hierarchy: hierarchy).write(to: url)
+        try makeUntoldData(layout: layout).write(to: url)
         return url
     }
 
     /// The node path the engine derives for the mesh child of a `hierarchy` fixture.
     static let hierarchyChildNodePath = "Root/root_entity#0/child#1"
+    /// … for the second mesh child of a `hierarchy(secondChild: true)` fixture.
+    static let hierarchySecondChildNodePath = "Root/root_entity#0/child2#2"
+    /// … for the child of a `hierarchy(namelessChild: true)` fixture.
+    static let hierarchyNamelessChildNodePath = "Root/root_entity#0/entity_1#1"
 
     static func makeUntoldData(hierarchy: Bool) -> Data {
-        let strings = ["root_entity", "child", "mesh_0", "mat_0", "albedo.ktx2"]
+        makeUntoldData(layout: hierarchy ? .hierarchy() : .singleMesh)
+    }
+
+    static func makeUntoldData(layout: Layout) -> Data {
+        let strings = ["root_entity", "child", "child2", "legs", "seat", "mesh_0", "mat_0", "albedo.ktx2"]
         let stringTable = makeStringTable(strings)
         let bounds = UntoldAABB(min: SIMD3<Float>(-1, -1, -1), max: SIMD3<Float>(1, 1, 1))
 
@@ -56,51 +82,54 @@ enum GaussianTwinTestFixtures {
         }
         let indexData = indexWriter.data
 
-        let meshEntityId: UInt32 = hierarchy ? 1 : 0
-        var entities: [UntoldEntityRecordV1] = []
-        if hierarchy {
-            entities.append(UntoldEntityRecordV1(
-                entityId: 0,
-                nameOffset: stringTable.offsets["root_entity"]!,
-                firstMeshRecordIndex: 0,
-                meshRecordCount: 0,
-                localBounds: bounds,
-                worldBounds: bounds
-            ))
-            entities.append(UntoldEntityRecordV1(
-                entityId: 1,
-                parentEntityId: 0,
-                nameOffset: stringTable.offsets["child"]!,
-                firstMeshRecordIndex: 0,
-                meshRecordCount: 1,
-                localBounds: bounds,
-                worldBounds: bounds
-            ))
-        } else {
-            entities.append(UntoldEntityRecordV1(
-                entityId: 0,
-                nameOffset: stringTable.offsets["root_entity"]!,
-                firstMeshRecordIndex: 0,
-                meshRecordCount: 1,
-                localBounds: bounds,
-                worldBounds: bounds
-            ))
+        // (entity id, parent, name, has a mesh) in entity-table order.
+        let plan: [(id: UInt32, parent: UInt32, name: String?, mesh: Bool)]
+        switch layout {
+        case .singleMesh:
+            plan = [(0, UntoldFormat.invalidIndex, "root_entity", true)]
+        case let .hierarchy(secondChild, namelessChild):
+            var nodes: [(id: UInt32, parent: UInt32, name: String?, mesh: Bool)] = [
+                (0, UntoldFormat.invalidIndex, "root_entity", false),
+                (1, 0, namelessChild ? nil : "child", true),
+            ]
+            if secondChild {
+                nodes.append((2, 0, "child2", true))
+            }
+            plan = nodes
+        case .twoRootMeshes:
+            plan = [(0, UntoldFormat.invalidIndex, "legs", true), (1, UntoldFormat.invalidIndex, "seat", true)]
         }
-        let mesh = UntoldMeshRecordV1(
-            entityId: meshEntityId,
-            meshNameOffset: stringTable.offsets["mesh_0"]!,
-            materialIndex: 0,
-            indexType: .uint16,
-            vertexCount: 3,
-            indexCount: 3,
-            vertexStrideBytes: 32,
-            vertexDataOffset: 0,
-            indexDataOffset: 0,
-            vertexDataSizeBytes: UInt64(vertexData.count),
-            indexDataSizeBytes: UInt64(indexData.count),
-            estimatedGPUBytes: UInt64(vertexData.count + indexData.count),
-            localBounds: bounds
-        )
+
+        var entities: [UntoldEntityRecordV1] = []
+        var meshes: [UntoldMeshRecordV1] = []
+        for node in plan {
+            entities.append(UntoldEntityRecordV1(
+                entityId: node.id,
+                parentEntityId: node.parent,
+                nameOffset: node.name.map { stringTable.offsets[$0]! } ?? UntoldFormat.invalidIndex,
+                firstMeshRecordIndex: UInt32(meshes.count),
+                meshRecordCount: node.mesh ? 1 : 0,
+                localBounds: bounds,
+                worldBounds: bounds
+            ))
+            if node.mesh {
+                meshes.append(UntoldMeshRecordV1(
+                    entityId: node.id,
+                    meshNameOffset: stringTable.offsets["mesh_0"]!,
+                    materialIndex: 0,
+                    indexType: .uint16,
+                    vertexCount: 3,
+                    indexCount: 3,
+                    vertexStrideBytes: 32,
+                    vertexDataOffset: 0,
+                    indexDataOffset: 0,
+                    vertexDataSizeBytes: UInt64(vertexData.count),
+                    indexDataSizeBytes: UInt64(indexData.count),
+                    estimatedGPUBytes: UInt64(vertexData.count + indexData.count),
+                    localBounds: bounds
+                ))
+            }
+        }
         let material = UntoldMaterialRecordV1(nameOffset: stringTable.offsets["mat_0"]!, baseColorTextureIndex: 0)
         let texture = UntoldTextureRefRecordV1(
             nameOffset: stringTable.offsets["albedo.ktx2"]!,
@@ -114,7 +143,7 @@ enum GaussianTwinTestFixtures {
         var header = UntoldFileHeaderV1(
             fileType: .tile,
             chunkCount: 0,
-            meshCount: 1,
+            meshCount: UInt32(meshes.count),
             materialCount: 1,
             textureRefCount: 1,
             entityCount: UInt32(entities.count),
@@ -126,7 +155,7 @@ enum GaussianTwinTestFixtures {
         let payloads: [(UntoldChunkType, Data, UInt32)] = [
             (.stringTable, stringTable.data, 0),
             (.entityTable, encodeRecords(entities), UInt32(entities.count)),
-            (.meshTable, encodeRecords([mesh]), 1),
+            (.meshTable, encodeRecords(meshes), UInt32(meshes.count)),
             (.materialTable, encodeRecords([material]), 1),
             (.textureTable, encodeRecords([texture]), 1),
             (.vertexData, vertexData, 0),
@@ -265,5 +294,20 @@ enum GaussianTwinTestFixtures {
             registerComponent(entityId: node, componentType: RenderComponent.self)
         }
         return (root, node)
+    }
+
+    /// Another mesh node under an existing placement's root.
+    static func addDerivedMeshNode(root: EntityID, nodePath: String, name: String = "child2") -> EntityID {
+        let node = createEntity()
+        setEntityName(entityId: node, name: name)
+        registerComponent(entityId: node, componentType: LocalTransformComponent.self)
+        registerComponent(entityId: node, componentType: WorldTransformComponent.self)
+        registerComponent(entityId: node, componentType: DerivedAssetNodeComponent.self)
+        if let derived = scene.get(component: DerivedAssetNodeComponent.self, for: node) {
+            derived.assetRootEntityId = root
+            derived.nodePath = nodePath
+        }
+        registerComponent(entityId: node, componentType: RenderComponent.self)
+        return node
     }
 }

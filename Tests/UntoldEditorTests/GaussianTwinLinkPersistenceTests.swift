@@ -14,14 +14,18 @@ import XCTest
 
 final class GaussianTwinLinkPersistenceTests: XCTestCase {
     private var directory: URL!
+    private var previewEnabled = true
 
     override func setUpWithError() throws {
         try super.setUpWithError()
         scene = Scene()
         directory = try GaussianTwinTestFixtures.makeTemporaryDirectory()
+        previewEnabled = true
+        GaussianTwinLinkPersistence.previewEnabled = { [unowned self] in previewEnabled }
     }
 
     override func tearDown() {
+        GaussianTwinLinkPersistence.previewEnabled = { GaussianTwinPreviewSettings.shared.isEnabled }
         if let directory {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -79,6 +83,48 @@ final class GaussianTwinLinkPersistenceTests: XCTestCase {
         }
     }
 
+    func test_resolveTarget_namelessRecordMatchesTheLoadersNodePath() throws {
+        let untold = try GaussianTwinTestFixtures.writeUntold(to: directory, layout: .hierarchy(namelessChild: true))
+        let placed = GaussianTwinTestFixtures.makeAssetInstance(assetURL: untold, nodePath: GaussianTwinTestFixtures.hierarchyNamelessChildNodePath)
+
+        let target = try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: placed.node)
+        XCTAssertEqual(target.entityRecordId, 1, "a record without a name is `entity_<id>` to the loader and to us")
+    }
+
+    func test_resolveTarget_plainEntityOfAMultiMeshFileNeedsAUniqueNamedRecord() throws {
+        let untold = try GaussianTwinTestFixtures.writeUntold(to: directory, layout: .twoRootMeshes)
+
+        // The engine put the node named after the entity on it (named-node load).
+        let seat = GaussianTwinTestFixtures.makeMeshEntity(name: "seat", assetURL: untold)
+        XCTAssertEqual(try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: seat).entityRecordId, 1, "not the first mesh record")
+        let legs = GaussianTwinTestFixtures.makeMeshEntity(name: "legs", assetURL: untold)
+        XCTAssertEqual(try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: legs).entityRecordId, 0)
+
+        let renamed = GaussianTwinTestFixtures.makeMeshEntity(name: "Chair", assetURL: untold)
+        XCTAssertThrowsError(try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: renamed)) { error in
+            XCTAssertEqual(error as? GaussianTwinLinkError, .ambiguousEntityRecord(untold.standardizedFileURL), "no guessing")
+        }
+        XCTAssertTrue(GaussianTwinLinkError.ambiguousEntityRecord(untold).localizedDescription.contains("Chair.untold"))
+
+        // The seat's link is the seat's alone, whatever the other entities of the file are.
+        let payload = try GaussianTwinTestFixtures.writeUntoldGS(to: directory.appendingPathComponent("seat.untoldgs"))
+        try GaussianTwinLinkPersistence.writeTwinLink(entityId: seat, link: GaussianTwinLinkPersistence.makeLink(payloadURL: payload, untoldURL: untold))
+        XCTAssertEqual(try Array(UntoldAssetPatcher.gaussianAssets(in: Data(contentsOf: untold)).keys), [1])
+        XCTAssertNil(scene.get(component: GaussianAssetLinkComponent.self, for: legs))
+        XCTAssertNil(scene.get(component: GaussianAssetLinkComponent.self, for: renamed))
+    }
+
+    func test_resolveTarget_streamedStubIsNotATarget() throws {
+        let untold = try GaussianTwinTestFixtures.writeUntold(to: directory, hierarchy: true)
+        let placed = GaussianTwinTestFixtures.makeAssetInstance(assetURL: untold, nodePath: "Root/child#0#0")
+        registerComponent(entityId: placed.node, componentType: StreamingComponent.self)
+
+        XCTAssertNil(GaussianTwinLinkPersistence.resolveUntoldURL(entityId: placed.node), "the streamer's node path names no record")
+        XCTAssertThrowsError(try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: placed.node)) { error in
+            XCTAssertEqual(error as? GaussianTwinLinkError, .notBackedByUntold)
+        }
+    }
+
     // MARK: - Round trip
 
     func test_writeReadRemove_roundTripsThroughTheUntoldFile() throws {
@@ -118,19 +164,63 @@ final class GaussianTwinLinkPersistenceTests: XCTestCase {
         XCTAssertEqual(component.exposureOffsetEV, -0.5)
         XCTAssertEqual(component.lodSplatCounts, [5])
 
-        // A second write replaces the record.
+        // And previewed: a twin with the record's payload and settings.
+        let twin = try XCTUnwrap(scene.get(component: GaussianTwinComponent.self, for: entity))
+        XCTAssertEqual(twin.payloadURL?.standardizedFileURL, payload.standardizedFileURL)
+        XCTAssertEqual(twin.options, GaussianTwinOptions(link: component))
+        XCTAssertEqual(twin.options.swapDistanceMeters, 8)
+        XCTAssertEqual(twin.options.exposureOffsetEV, -0.5)
+
+        // A second write replaces the record; the same payload keeps the twin (no reload).
         var tweaked = link
         tweaked.swapDistanceMeters = 3
         try GaussianTwinLinkPersistence.writeTwinLink(entityId: entity, link: tweaked)
         XCTAssertEqual(try UntoldReader().readAsset(from: Data(contentsOf: untold)).gaussianAssets.count, 1)
         XCTAssertEqual(GaussianTwinLinkPersistence.readTwinLink(entityId: entity)?.swapDistanceMeters, 3)
         XCTAssertEqual(scene.get(component: GaussianAssetLinkComponent.self, for: entity)?.swapDistanceMeters, 3)
+        XCTAssertTrue(scene.get(component: GaussianTwinComponent.self, for: entity) === twin, "same payload keeps the twin")
+        XCTAssertEqual(twin.options.swapDistanceMeters, 3)
+
+        // A new payload relinks.
+        let other = try GaussianTwinTestFixtures.writeUntoldGS(to: directory.appendingPathComponent("Chair_v2.untoldgs"), splatCount: 2)
+        try GaussianTwinLinkPersistence.writeTwinLink(entityId: entity, link: GaussianTwinLinkPersistence.makeLink(payloadURL: other, untoldURL: untold))
+        XCTAssertEqual(scene.get(component: GaussianTwinComponent.self, for: entity)?.payloadURL?.standardizedFileURL, other.standardizedFileURL)
 
         try GaussianTwinLinkPersistence.removeTwinLink(entityId: entity)
         XCTAssertNil(GaussianTwinLinkPersistence.readTwinLink(entityId: entity))
         XCTAssertTrue(try UntoldReader().readAsset(from: Data(contentsOf: untold)).gaussianAssets.isEmpty)
         XCTAssertNil(scene.get(component: GaussianAssetLinkComponent.self, for: entity))
         XCTAssertNil(scene.get(component: GaussianTwinComponent.self, for: entity), "the previewed twin goes with the link")
+    }
+
+    func test_previewOff_createsNoTwinButKeepsAnExistingOneInStep() throws {
+        let untold = try GaussianTwinTestFixtures.writeUntold(to: directory)
+        let payload = try GaussianTwinTestFixtures.writeUntoldGS(to: directory.appendingPathComponent("Chair.untoldgs"))
+        let entity = GaussianTwinTestFixtures.makeMeshEntity(assetURL: untold)
+
+        previewEnabled = false
+        try GaussianTwinLinkPersistence.writeTwinLink(entityId: entity, link: GaussianTwinLinkPersistence.makeLink(payloadURL: payload, untoldURL: untold))
+        XCTAssertNotNil(scene.get(component: GaussianAssetLinkComponent.self, for: entity), "the link component does not depend on the preview")
+        XCTAssertNil(scene.get(component: GaussianTwinComponent.self, for: entity), "no twin while the preview is off")
+
+        // Preview on: the twin appears. Off again: the system keeps it, so the edits made
+        // while off must still reach it — re-adoption skips entities that have a twin.
+        previewEnabled = true
+        try GaussianTwinLinkPersistence.writeTwinLink(entityId: entity, link: GaussianTwinLinkPersistence.makeLink(payloadURL: payload, untoldURL: untold))
+        let twin = try XCTUnwrap(scene.get(component: GaussianTwinComponent.self, for: entity))
+        XCTAssertEqual(twin.options.swapDistanceMeters, 0)
+
+        previewEnabled = false
+        try GaussianTwinLinkPersistence.writeTwinLink(entityId: entity, link: GaussianTwinLinkPersistence.makeLink(payloadURL: payload, untoldURL: untold, swapDistanceMeters: 8))
+        XCTAssertTrue(scene.get(component: GaussianTwinComponent.self, for: entity) === twin)
+        XCTAssertEqual(twin.options.swapDistanceMeters, 8, "options follow the record with the preview off")
+
+        let other = try GaussianTwinTestFixtures.writeUntoldGS(to: directory.appendingPathComponent("Chair_v2.untoldgs"))
+        try GaussianTwinLinkPersistence.writeTwinLink(entityId: entity, link: GaussianTwinLinkPersistence.makeLink(payloadURL: other, untoldURL: untold))
+        XCTAssertEqual(scene.get(component: GaussianTwinComponent.self, for: entity)?.payloadURL?.standardizedFileURL, other.standardizedFileURL, "a new payload relinks with the preview off")
+
+        try GaussianTwinLinkPersistence.removeTwinLink(entityId: entity)
+        XCTAssertNil(scene.get(component: GaussianTwinComponent.self, for: entity), "a stale twin is dropped with the preview off")
     }
 
     func test_write_mirrorsOntoEveryPlacementOfTheSameRecord() throws {
@@ -165,9 +255,32 @@ final class GaussianTwinLinkPersistenceTests: XCTestCase {
         XCTAssertNil(scene.get(component: GaussianAssetLinkComponent.self, for: placed.root))
     }
 
+    func test_write_onOneMeshNodeLeavesItsSiblingsAloneAndReachesOtherPlacements() throws {
+        let untold = try GaussianTwinTestFixtures.writeUntold(to: directory, name: "Table", layout: .hierarchy(secondChild: true))
+        let payload = try GaussianTwinTestFixtures.writeUntoldGS(to: directory.appendingPathComponent("leg.untoldgs"))
+        let first = GaussianTwinTestFixtures.makeAssetInstance(assetURL: untold, nodePath: GaussianTwinTestFixtures.hierarchyChildNodePath)
+        let firstSibling = GaussianTwinTestFixtures.addDerivedMeshNode(root: first.root, nodePath: GaussianTwinTestFixtures.hierarchySecondChildNodePath)
+        let second = GaussianTwinTestFixtures.makeAssetInstance(assetURL: untold, nodePath: GaussianTwinTestFixtures.hierarchyChildNodePath)
+        let secondSibling = GaussianTwinTestFixtures.addDerivedMeshNode(root: second.root, nodePath: GaussianTwinTestFixtures.hierarchySecondChildNodePath)
+
+        let target = try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: first.node)
+        XCTAssertEqual(target.entityRecordId, 1)
+        XCTAssertEqual(Set(GaussianTwinLinkPersistence.entitiesBacked(by: target)), [first.node, second.node], "same record in both placements, siblings excluded")
+        XCTAssertEqual(try GaussianTwinLinkPersistence.resolveTargetOrThrow(entityId: firstSibling).entityRecordId, 2)
+
+        try GaussianTwinLinkPersistence.writeTwinLink(entityId: first.node, link: GaussianTwinLinkPersistence.makeLink(payloadURL: payload, untoldURL: untold))
+        XCTAssertEqual(try Array(UntoldAssetPatcher.gaussianAssets(in: Data(contentsOf: untold)).keys), [1])
+        XCTAssertNotNil(scene.get(component: GaussianAssetLinkComponent.self, for: first.node))
+        XCTAssertNotNil(scene.get(component: GaussianAssetLinkComponent.self, for: second.node), "the other placement's node follows")
+        XCTAssertNil(scene.get(component: GaussianAssetLinkComponent.self, for: firstSibling), "a sibling mesh node of the same file is another record")
+        XCTAssertNil(scene.get(component: GaussianAssetLinkComponent.self, for: secondSibling))
+        XCTAssertNil(scene.get(component: GaussianTwinComponent.self, for: firstSibling))
+        XCTAssertNotNil(scene.get(component: GaussianTwinComponent.self, for: second.node))
+    }
+
     // MARK: - Payload path and validation
 
-    func test_storedPayloadPath_isRelativeInsideTheAssetFolderElseTheBasename() throws {
+    func test_storedPayloadPath_isRelativeToTheUntoldsDirectoryElseTheBasename() throws {
         let models = directory.appendingPathComponent("GameData/Models/Chair", isDirectory: true)
         let gaussians = directory.appendingPathComponent("GameData/Gaussians", isDirectory: true)
         try FileManager.default.createDirectory(at: models, withIntermediateDirectories: true)
@@ -180,13 +293,20 @@ final class GaussianTwinLinkPersistenceTests: XCTestCase {
 
         let nested = GaussianTwinLinkPersistence.storedPayloadPath(payloadURL: models.appendingPathComponent("splats/Chair.untoldgs"), untoldURL: untold)
         XCTAssertEqual(nested.path, "splats/Chair.untoldgs")
+        XCTAssertTrue(nested.isRelative)
 
-        // A sibling folder is outside the .untold's directory: the runtime cannot reach it
-        // through a relative path, so only the file name is stored (the caller warns).
+        // The project's Gaussians folder, seen from Models/Chair: the layout every
+        // "Assign Selected" from the browser produces.
         let sibling = GaussianTwinLinkPersistence.storedPayloadPath(payloadURL: gaussians.appendingPathComponent("chair_capture.untoldgs"), untoldURL: untold)
-        XCTAssertEqual(sibling.path, "chair_capture.untoldgs")
-        XCTAssertFalse(sibling.isRelative)
+        XCTAssertEqual(sibling.path, "../../Gaussians/chair_capture.untoldgs")
+        XCTAssertTrue(sibling.isRelative)
 
+        // The stored path resolves the way the loader resolves it (appended, then fileExists).
+        let capture = try GaussianTwinTestFixtures.writeUntoldGS(to: gaussians.appendingPathComponent("chair_capture.untoldgs"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: untold.deletingLastPathComponent().appendingPathComponent(sibling.path).path))
+        XCTAssertEqual(GaussianTwinLinkPersistence.resolvedPayloadURL(path: sibling.path, untoldURL: untold), capture.standardizedFileURL)
+
+        // Another volume shares nothing but the root: the bare name (the caller warns).
         let elsewhere = GaussianTwinLinkPersistence.storedPayloadPath(payloadURL: URL(fileURLWithPath: "/Volumes/Captures/chair.untoldgs"), untoldURL: untold)
         XCTAssertEqual(elsewhere.path, "chair.untoldgs")
         XCTAssertFalse(elsewhere.isRelative)
@@ -206,8 +326,19 @@ final class GaussianTwinLinkPersistenceTests: XCTestCase {
             "a relative path that no longer exists falls back to the basename beside the file"
         )
         XCTAssertEqual(
-            GaussianTwinLinkPersistence.resolvedPayloadURL(path: "/abs/Chair.untoldgs", untoldURL: untold).path,
-            "/abs/Chair.untoldgs"
+            GaussianTwinLinkPersistence.resolvedPayloadURL(path: "/abs/Chair.untoldgs", untoldURL: untold),
+            directory.appendingPathComponent("Chair.untoldgs").standardizedFileURL,
+            "the loader treats a bare /abs path as relative (no scheme) and falls back to the basename"
+        )
+        XCTAssertEqual(
+            GaussianTwinLinkPersistence.resolvedPayloadURL(path: "file:///abs/Chair.untoldgs", untoldURL: untold).path,
+            "/abs/Chair.untoldgs",
+            "a URL with a scheme is absolute, as for the loader"
+        )
+        XCTAssertEqual(
+            GaussianTwinLinkPersistence.resolvedPayloadURL(path: "gone/Chair_missing.untoldgs", untoldURL: untold),
+            directory.appendingPathComponent("gone/Chair_missing.untoldgs").standardizedFileURL,
+            "nothing found: the relative URL, as the loader returns it"
         )
     }
 
