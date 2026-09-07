@@ -111,7 +111,7 @@ cd UntoldEditor
 ```
 
 The Editor is a Swift Package with an executable target named UntoldEditor.
-It declares a dependency on the Untold Engine package; Xcode/SwiftPM will resolve it automatically.
+It declares a dependency on the Untold Engine package (and on UntoldGaussianTwins, for the splat twin preview); Xcode/SwiftPM will resolve them automatically.
 
 ### Build & run via CLI
 
@@ -161,6 +161,15 @@ xcodebuild -resolvePackageDependencies
 
 > 💡 Why an *external* asset folder?  
 > It enables **runtime importing** and iteration without copying everything into the app bundle.
+
+### Splat twins
+
+A mesh placed from a `.untold` asset can stand in for a captured Gaussian splat up close. Select the mesh (the asset root of a single-node asset, or a mesh node of a multi-node one) and use the Inspector's **Splat Twin** section:
+
+- **Assign Selected** links the `.untoldgs` selected in the Asset Browser's Gaussians folder; **Choose…** picks one from disk; **Remove** unlinks it. Sources must be cooked first (`Cook to .untoldgs…`).
+- **Swap Distance** (m, 0 = swap at any distance), **Occluder Shrink** (m) and **Exposure Offset** (EV) apply live and are saved shortly after the last edit; every change is undoable (⌘Z).
+
+The link is stored in the `.untold` file itself — its `gaussianAsset` record, written through the engine's `UntoldAssetPatcher` — not in the scene. Any app that loads the asset and runs `GaussianTwinSystem` (package [UntoldGaussianTwins](https://github.com/miolabs/UntoldGaussianTwins)) gets the swap; the payload path is stored relative to the `.untold` file, so keep the `.untoldgs` inside or beside the asset's folder. **View ▸ Preview Splat Twins** (on by default) runs the same system in the editor viewport so the swap can be checked as the scene camera approaches.
 
 ---
 
