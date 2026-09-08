@@ -567,47 +567,46 @@ public struct EditorView: View {
 
     /// Right panel is contextual: the project shows Environment/Effects (with a
     /// themed segmented switch); a selected object shows the Inspector.
+    @ViewBuilder
     private var editorRightPanel: some View {
-        Group {
-            if selectionManager.projectSelected {
-                VStack(spacing: 0) {
-                    HStack {
-                        envEffectsTabs
-                        Spacer()
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.editorPanelBackground.opacity(0.9))
-                    .padding(.top, 5)
-
-                    Group {
-                        switch rightPanelEnvTab {
-                        case .environment:
-                            EnvironmentView(
-                                selectedAsset: $selectedAsset,
-                                onLoadSceneAuthored: editor_loadSceneAuthoredFromAsset
-                            )
-                        case .effects:
-                            PostProcessingEditorView(selectedAsset: $selectedAsset)
-                        }
-                    }
-                    .editorPanel()
-                    .padding(5)
+        if selectionManager.projectSelected {
+            VStack(spacing: 0) {
+                HStack {
+                    envEffectsTabs
+                    Spacer()
                 }
-            } else if selectionManager.sceneSelected {
-                sceneInspector
-                    .editorPanel()
-                    .padding(5)
-            } else {
-                InspectorView(
-                    selectionManager: selectionManager,
-                    sceneGraphModel: sceneGraphModel,
-                    onAddName_Editor: editor_addName,
-                    selectedAsset: $selectedAsset
-                )
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.editorPanelBackground.opacity(0.9))
+                .padding(.top, 5)
+
+                Group {
+                    switch rightPanelEnvTab {
+                    case .environment:
+                        EnvironmentView(
+                            selectedAsset: $selectedAsset,
+                            onLoadSceneAuthored: editor_loadSceneAuthoredFromAsset
+                        )
+                    case .effects:
+                        PostProcessingEditorView(selectedAsset: $selectedAsset)
+                    }
+                }
                 .editorPanel()
                 .padding(5)
             }
+        } else if selectionManager.sceneSelected {
+            sceneInspector
+                .editorPanel()
+                .padding(5)
+        } else {
+            InspectorView(
+                selectionManager: selectionManager,
+                sceneGraphModel: sceneGraphModel,
+                onAddName_Editor: editor_addName,
+                selectedAsset: $selectedAsset
+            )
+            .editorPanel()
+            .padding(5)
         }
     }
 
@@ -1291,7 +1290,9 @@ public struct EditorView: View {
 
     /// Ask before switching scenes: loading discards the current world.
     private func editor_requestLoadScene(_ url: URL) {
-        if url == editorController?.currentSceneURL { return }
+        if url == editorController?.currentSceneURL {
+            return
+        }
         pendingSceneToLoad = url
         showSceneSwitchAlert = true
     }
@@ -2435,8 +2436,12 @@ public struct EditorView: View {
                 let exportSucceeded = process.terminationStatus == 0 && !wasCancelled
 
                 DispatchQueue.main.async {
-                    if !stdout.isEmpty { Logger.log(message: stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                    if !stderr.isEmpty { Logger.log(message: stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    if !stdout.isEmpty {
+                        Logger.log(message: stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
+                    if !stderr.isEmpty {
+                        Logger.log(message: stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
                 }
 
                 if exportSucceeded, compressTextures {
@@ -2449,10 +2454,18 @@ public struct EditorView: View {
                         task.setDetail("Patching texture references…")
                         let patchResult = runTexbakeStep(script: texbakeScript, arguments: ["--patch-refs", request.outputURL.path], astcencBin: astcencBin)
                         DispatchQueue.main.async {
-                            if !bakeResult.stdout.isEmpty { Logger.log(message: bakeResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                            if !bakeResult.stderr.isEmpty { Logger.log(message: bakeResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                            if !patchResult.stdout.isEmpty { Logger.log(message: patchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                            if !patchResult.stderr.isEmpty { Logger.log(message: patchResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                            if !bakeResult.stdout.isEmpty {
+                                Logger.log(message: bakeResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
+                            if !bakeResult.stderr.isEmpty {
+                                Logger.log(message: bakeResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
+                            if !patchResult.stdout.isEmpty {
+                                Logger.log(message: patchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
+                            if !patchResult.stderr.isEmpty {
+                                Logger.log(message: patchResult.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                            }
                             if bakeResult.status != 0 || patchResult.status != 0 {
                                 Logger.log(message: "⚠️ ASTC compression had errors — preview asset exported without compressed textures")
                             }
