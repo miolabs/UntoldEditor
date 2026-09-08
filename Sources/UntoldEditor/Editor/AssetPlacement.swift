@@ -83,7 +83,7 @@ func loadAssetDragPayload(from providers: [NSItemProvider], completion: @escapin
 
 /// An asset the scene can place as its own entity.
 enum PlaceableAsset: Equatable {
-    /// A `.untold` runtime asset from the Models category.
+    /// A `.untold` runtime asset (or a multi-model `.untoldpack`) from the Models category.
     case model(URL)
     /// A Gaussian splat `.ply` source or a single baked `.untoldgs`.
     case gaussian(URL)
@@ -105,7 +105,7 @@ func placeableAsset(for asset: Asset) -> PlaceableAsset? {
         } else {
             url = asset.path
         }
-        guard url.pathExtension.lowercased() == runtimeAssetExtension else { return nil }
+        guard runtimeModelAssetExtensions.contains(url.pathExtension.lowercased()) else { return nil }
         return .model(url)
 
     case AssetCategory.gaussians.rawValue:
@@ -161,9 +161,11 @@ func placeAsset(
     let statusMessage: String
     switch placeable {
     case let .model(url):
+        // The engine resolves an absolute path as-is, which is what a `.untoldpack`
+        // needs to find its per-model files beside it.
         setEntityMeshAsync(
             entityId: entityId,
-            filename: url.deletingPathExtension().lastPathComponent,
+            filename: runtimeAssetFilenameForLoading(url),
             withExtension: url.pathExtension
         ) { success in
             if success {
