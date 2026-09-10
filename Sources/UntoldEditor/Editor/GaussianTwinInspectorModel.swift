@@ -407,7 +407,7 @@ final class GaussianTwinInspectorModel: ObservableObject {
     func setAlignMode(_ on: Bool) {
         if on {
             guard let target, link != nil else { return }
-            GaussianTwinAlignMode.shared.enter(owner: self, entities: Set(backedEntities(target)))
+            GaussianTwinAlignMode.shared.enter(owner: self, target: target, entities: Set(backedEntities(target)))
         } else {
             GaussianTwinAlignMode.shared.leave(owner: self)
         }
@@ -425,11 +425,16 @@ final class GaussianTwinInspectorModel: ObservableObject {
         registerUndo(name: name, from: previous, to: updated)
     }
 
-    /// Mirrors an edited link onto the scene without touching the file.
+    /// Mirrors an edited link onto the scene without touching the file. The placements are
+    /// looked up again for every edit, and the align mode's set follows them: a placement
+    /// whose mesh landed after the mode was entered (a drop still loading then, a scene still
+    /// opening) is forced like the others from its first edit on.
     private func applyLive(_ link: UntoldAssetPatcher.GaussianAssetLink, target: GaussianTwinLinkTarget) {
-        for backed in backedEntities(target) {
-            GaussianTwinLinkPersistence.applyLinkComponent(link, to: backed, untoldURL: target.untoldURL)
-            GaussianTwinLinkPersistence.applyPreview(entityId: backed)
+        let backed = backedEntities(target)
+        GaussianTwinAlignMode.shared.update(owner: self, entities: Set(backed))
+        for entityId in backed {
+            GaussianTwinLinkPersistence.applyLinkComponent(link, to: entityId, untoldURL: target.untoldURL)
+            GaussianTwinLinkPersistence.applyPreview(entityId: entityId)
         }
     }
 

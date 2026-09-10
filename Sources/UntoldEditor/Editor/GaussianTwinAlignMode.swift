@@ -28,8 +28,12 @@ final class GaussianTwinAlignMode: ObservableObject {
     /// Main-thread state, like the rest of the editor's UI models.
     nonisolated(unsafe) static let shared = GaussianTwinAlignMode()
 
-    /// The entities whose preview is overridden; empty when the mode is off.
+    /// The entities whose preview is overridden; empty when the mode is off. The placements
+    /// of `target` as found on entering, refreshed by `update(entities:)` on every live edit
+    /// (a placement whose mesh lands after the mode was entered joins then).
     @Published private(set) var entities: Set<EntityID> = []
+    /// The record whose placements are being aligned; nil when the mode is off.
+    private(set) var target: GaussianTwinLinkTarget?
     /// The model that entered, so a second inspector or a deinit can tell whose mode it is.
     private(set) var owner: ObjectIdentifier?
     /// `GaussianDebugOptions.disableOccluderShell` as found on entering, put back on leaving.
@@ -44,9 +48,10 @@ final class GaussianTwinAlignMode: ObservableObject {
         owner == ObjectIdentifier(object)
     }
 
-    /// Enters (or, when another owner had it, takes over) for `entities`; nothing happens
-    /// for an empty set. The previews of the entities are updated at once.
-    func enter(owner object: AnyObject, entities newEntities: Set<EntityID>) {
+    /// Enters (or, when another owner had it, takes over) for the `entities` placed from
+    /// `target`; nothing happens for an empty set. The previews of the entities are updated
+    /// at once.
+    func enter(owner object: AnyObject, target newTarget: GaussianTwinLinkTarget, entities newEntities: Set<EntityID>) {
         guard !newEntities.isEmpty else { return }
         if isActive {
             leave()
@@ -54,8 +59,18 @@ final class GaussianTwinAlignMode: ObservableObject {
         restoredDisableOccluderShell = GaussianDebugOptions.shared.disableOccluderShell
         GaussianDebugOptions.shared.disableOccluderShell = true
         owner = ObjectIdentifier(object)
+        target = newTarget
         entities = newEntities
         reapplyPreviews(newEntities)
+    }
+
+    /// The owner's placements as they are now: a placement that arrived since entering (its
+    /// mesh landed after the mode was on) is forced from here on, one that is gone is dropped.
+    /// The previews of the entities are the caller's to update (it does, for every placement,
+    /// right after). No-op when `object` is not the owner or nothing changed.
+    func update(owner object: AnyObject, entities current: Set<EntityID>) {
+        guard isOwned(by: object), current != entities else { return }
+        entities = current
     }
 
     /// Leaves when `object` is the owner (a model going away must not end a mode another
@@ -71,6 +86,7 @@ final class GaussianTwinAlignMode: ObservableObject {
         GaussianDebugOptions.shared.disableOccluderShell = restoredDisableOccluderShell
         let previous = entities
         owner = nil
+        target = nil
         entities = []
         reapplyPreviews(previous)
     }

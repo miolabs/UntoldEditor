@@ -393,6 +393,41 @@ final class GaussianTwinAlignmentTests: XCTestCase {
         XCTAssertEqual(twin()?.options, GaussianTwinOptions(link: component))
     }
 
+    /// A placement whose mesh lands after the mode was entered (a drop still loading, a scene
+    /// still opening) is not in the set taken on entering; the next live edit finds it, forces
+    /// it like the others, and leaving restores it too.
+    func test_alignMode_adoptsAPlacementThatArrivesWhileOn() throws {
+        let model = makeModel()
+        model.assign(payloadURL: payload)
+        model.setSwapDistance(5)
+        model.flushPendingPersist()
+        model.setAlignMode(true)
+        XCTAssertEqual(GaussianTwinAlignMode.shared.entities, [entity])
+        XCTAssertEqual(GaussianTwinAlignMode.shared.target, model.target)
+
+        // Lands now, with the link the loader attaches from the file, at the link's options.
+        let late = GaussianTwinTestFixtures.makeMeshEntity(name: "Chair 2", assetURL: untold)
+        GaussianTwinLinkPersistence.applyLinkComponent(model.link, to: late, untoldURL: untold)
+        GaussianTwinSystem.shared.resetSceneLinkAdoption()
+        GaussianTwinSystem.shared.adoptSceneLinks()
+        XCTAssertEqual(twin(late)?.options.swapDistanceMeters, 5)
+        XCTAssertFalse(try XCTUnwrap(twin(late)?.options.showsMeshWhileSwapped))
+
+        model.setAlignmentYawDegrees(15)
+        XCTAssertEqual(GaussianTwinAlignMode.shared.entities, [entity, late], "the edit brought it into the mode")
+        XCTAssertEqual(twin(late)?.options.swapDistanceMeters, 0, "forced like the others")
+        XCTAssertTrue(try XCTUnwrap(twin(late)?.options.showsMeshWhileSwapped))
+        XCTAssertEqual(twin(late)?.options.alignment?.yawDegrees, 15)
+        XCTAssertEqual(linkComponent(late)?.swapDistanceMeters, 5, "its link component is the file's")
+
+        model.setAlignMode(false)
+        XCTAssertTrue(GaussianTwinAlignMode.shared.entities.isEmpty)
+        XCTAssertNil(GaussianTwinAlignMode.shared.target)
+        XCTAssertEqual(twin(late)?.options.swapDistanceMeters, 5, "restored with the others")
+        XCTAssertFalse(try XCTUnwrap(twin(late)?.options.showsMeshWhileSwapped))
+        XCTAssertEqual(twin(late)?.options.alignment?.yawDegrees, 15)
+    }
+
     func test_alignMode_restoresADebugOptionThatWasAlreadyOn() {
         GaussianDebugOptions.shared.disableOccluderShell = true
         let model = makeModel()
