@@ -76,6 +76,46 @@ enum GaussianTwinInspector {
         value.isFinite ? min(max(value, exposureOffsetRange.lowerBound), exposureOffsetRange.upperBound) : previous
     }
 
+    /// The uniform alignment scale: greater than zero, and kept within what a capture can
+    /// plausibly need against its mesh.
+    static let alignmentScaleRange: ClosedRange<Float> = 0.01 ... 100
+
+    static func clampedAlignmentScale(_ value: Float, previous: Float) -> Float {
+        value.isFinite ? min(max(value, alignmentScaleRange.lowerBound), alignmentScaleRange.upperBound) : previous
+    }
+
+    /// Yaw in degrees, any finite value.
+    static func clampedAlignmentYaw(_ value: Float, previous: Float) -> Float {
+        value.isFinite ? value : previous
+    }
+
+    /// The offset in metres, per component; a non-finite component keeps its previous value.
+    static func clampedAlignmentOffset(_ value: SIMD3<Float>, previous: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3<Float>(
+            value.x.isFinite ? value.x : previous.x,
+            value.y.isFinite ? value.y : previous.y,
+            value.z.isFinite ? value.z : previous.z
+        )
+    }
+
+    /// The alignment for the status line: "identity", or
+    /// "offset 0.12, 0, −0.30 m · yaw 12° · scale 1.00".
+    static func alignmentDescription(_ alignment: GaussianSplatAlignment?) -> String {
+        guard let alignment, alignment != .identity else { return "identity" }
+        let offset = [alignment.translation.x, alignment.translation.y, alignment.translation.z]
+            .map { formatted($0, fractionDigits: 2) }
+            .joined(separator: ", ")
+        return "offset \(offset) m · yaw \(formatted(alignment.yawDegrees, fractionDigits: 1))° · scale \(String(format: "%.2f", alignment.scale))"
+    }
+
+    /// "0" for zero, else the value with `fractionDigits` decimals (integers without them)
+    /// and a typographic minus.
+    private static func formatted(_ value: Float, fractionDigits: Int) -> String {
+        guard value != 0 else { return "0" }
+        let text = value == value.rounded() ? String(format: "%.0f", value) : String(format: "%.\(fractionDigits)f", value)
+        return text.replacingOccurrences(of: "-", with: "\u{2212}")
+    }
+
     /// The live scheduler: the main queue.
     static let mainQueueScheduler: GaussianTwinPersistScheduler = { delay, action in
         let item = DispatchWorkItem(block: action)
@@ -98,7 +138,8 @@ enum GaussianTwinInspector {
 /// One entity's Splat Twin section. Edits apply to the live scene at once (link component and
 /// viewport preview); the `.untold` file is written immediately on assign and remove, and
 /// `persistDelay` after the last field edit. Every change registers an undo step carrying the
-/// whole link before and after.
+/// whole link before and after. The align mode it can enter (`GaussianTwinAlignMode`) is
+/// session state: it ends with the model, the link or the preview and is never written.
 final class GaussianTwinInspectorModel: ObservableObject {
     struct Status: Equatable {
         var message: String
@@ -155,6 +196,7 @@ final class GaussianTwinInspectorModel: ObservableObject {
         if let changeObserver {
             NotificationCenter.default.removeObserver(changeObserver)
         }
+        GaussianTwinAlignMode.shared.leave(owner: self)
         flushPendingPersist()
     }
 
@@ -200,6 +242,38 @@ final class GaussianTwinInspectorModel: ObservableObject {
         link?.exposureOffsetEV ?? 0
     }
 
+    // MARK: - Alignment (read)
+
+    /// Where the splat sits in the mesh's space; identity when the link stores none.
+    var alignment: GaussianSplatAlignment {
+        link?.alignment ?? .identity
+    }
+
+    /// Whether the link stores an alignment (so Reset has something to do).
+    var hasAlignment: Bool {
+        link?.alignment != nil
+    }
+
+    /// Offset in metres, in the entity's local space.
+    var alignmentOffset: SIMD3<Float> {
+        alignment.translation
+    }
+
+    /// Rotation about the entity's +Y, degrees.
+    var alignmentYawDegrees: Float {
+        alignment.yawDegrees
+    }
+
+    /// Uniform scale, `GaussianTwinInspector.alignmentScaleRange`.
+    var alignmentScale: Float {
+        alignment.scale
+    }
+
+    /// "identity" or the offset, yaw and scale, for the status line.
+    var alignmentDescription: String {
+        GaussianTwinInspector.alignmentDescription(link?.alignment)
+    }
+
     // MARK: - Assign / remove (persisted at once)
 
     func assignSelectedAsset(_ asset: Asset?) {
@@ -222,12 +296,15 @@ final class GaussianTwinInspectorModel: ObservableObject {
         let previous = link
         do {
             let stored = GaussianTwinLinkPersistence.storedPayloadPath(payloadURL: payloadURL, untoldURL: target.untoldURL)
+            // The alignment stays too: a re-cook of the same capture shares its frame, and a
+            // different one is a Reset away.
             let newLink = try GaussianTwinLinkPersistence.makeLink(
                 payloadURL: payloadURL,
                 untoldURL: target.untoldURL,
                 swapDistanceMeters: previous?.swapDistanceMeters ?? 0,
                 occluderShrinkMeters: previous?.occluderShrinkMeters ?? 0.02,
-                exposureOffsetEV: previous?.exposureOffsetEV ?? 0
+                exposureOffsetEV: previous?.exposureOffsetEV ?? 0,
+                alignment: previous?.alignment
             )
             cancelScheduledPersist()
             try GaussianTwinLinkPersistence.writeTwinLink(target: target, link: newLink, writer: self)
@@ -244,10 +321,12 @@ final class GaussianTwinInspectorModel: ObservableObject {
         }
     }
 
-    /// Drops the link from the file, the scene and the preview.
+    /// Drops the link from the file, the scene and the preview. Ends the align mode: there is
+    /// nothing left to align.
     func removeLink() {
         guard let target, let previous = link else { return }
         cancelScheduledPersist()
+        setAlignMode(false)
         do {
             try GaussianTwinLinkPersistence.removeTwinLink(target: target, writer: self)
             link = nil
@@ -276,6 +355,63 @@ final class GaussianTwinInspectorModel: ObservableObject {
         updateLink(name: "Splat Twin Exposure Offset") { link in
             link.exposureOffsetEV = GaussianTwinInspector.clampedExposureOffset(value, previous: link.exposureOffsetEV)
         }
+    }
+
+    // MARK: - Alignment (edit)
+
+    func setAlignmentOffset(_ offset: SIMD3<Float>) {
+        updateAlignment(name: "Splat Twin Offset") { alignment in
+            alignment.translation = GaussianTwinInspector.clampedAlignmentOffset(offset, previous: alignment.translation)
+        }
+    }
+
+    func setAlignmentYawDegrees(_ degrees: Float) {
+        updateAlignment(name: "Splat Twin Yaw") { alignment in
+            alignment.yawDegrees = GaussianTwinInspector.clampedAlignmentYaw(degrees, previous: alignment.yawDegrees)
+        }
+    }
+
+    func setAlignmentScale(_ scale: Float) {
+        updateAlignment(name: "Splat Twin Scale") { alignment in
+            alignment.scale = GaussianTwinInspector.clampedAlignmentScale(scale, previous: alignment.scale)
+        }
+    }
+
+    /// Back to identity: the record drops its alignment (flag clear), as a link never aligned.
+    func resetAlignment() {
+        updateLink(name: "Reset Splat Twin Alignment") { link in
+            link.alignment = nil
+        }
+    }
+
+    /// An alignment edit through `updateLink`, so it applies live, persists after the pause and
+    /// undoes as one step. An alignment that comes out as the identity is stored as none, so a
+    /// link edited back to identity reads like one never aligned.
+    private func updateAlignment(name: String, _ mutate: (inout GaussianSplatAlignment) -> Void) {
+        updateLink(name: name) { link in
+            var alignment = link.alignment ?? .identity
+            mutate(&alignment)
+            link.alignment = alignment == .identity ? nil : alignment
+        }
+    }
+
+    // MARK: - Align mode (session only)
+
+    /// Whether this model's align mode is on: the twins of every placement of the record show
+    /// over their meshes at any distance, with the occluder shells off, so the alignment can
+    /// be judged. Not persisted; needs a link.
+    var isAlignMode: Bool {
+        GaussianTwinAlignMode.shared.isOwned(by: self)
+    }
+
+    func setAlignMode(_ on: Bool) {
+        if on {
+            guard let target, link != nil else { return }
+            GaussianTwinAlignMode.shared.enter(owner: self, entities: Set(backedEntities(target)))
+        } else {
+            GaussianTwinAlignMode.shared.leave(owner: self)
+        }
+        objectWillChange.send()
     }
 
     private func updateLink(name: String, _ mutate: (inout UntoldAssetPatcher.GaussianAssetLink) -> Void) {
@@ -348,11 +484,15 @@ final class GaussianTwinInspectorModel: ObservableObject {
             return
         }
         link = persisted
+        if persisted == nil {
+            setAlignMode(false)
+        }
         GaussianTwinLinkPersistence.applyToScene(target: target, link: persisted, decoded: decoded, writer: self)
     }
 
     /// Another writer (undo, a second inspector of the same asset) changed the record: drop
-    /// what was pending here and show what the file says.
+    /// what was pending here and show what the file says. A record that is gone (an undone
+    /// assign) takes the align mode with it.
     private func linkDidChangeOnDisk() {
         guard let target else { return }
         cancelScheduledPersist()
@@ -360,6 +500,7 @@ final class GaussianTwinInspectorModel: ObservableObject {
             link = fresh
         } else {
             link = nil
+            setAlignMode(false)
         }
     }
 
