@@ -149,6 +149,11 @@ struct GaussianTwinInspectorView: View {
             liveState = model.liveTwinDescription()
         }
         .onDisappear {
+            // The mode ends here, on the way out, rather than in the model's deinit: SwiftUI
+            // releases the section's model inside its next update, when the section of the
+            // new selection already observes the align mode, and publishing from there is a
+            // runtime issue. The deinit's leave stays as the fallback.
+            model.setAlignMode(false)
             model.flushPendingPersist()
         }
     }
@@ -213,7 +218,7 @@ struct GaussianTwinInspectorView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if model.isAlignMode {
-                Text("Align mode: mesh and splat both visible; shells off until it is turned off, the selection changes or the scene resets.")
+                Text("Align mode: mesh and splat both visible; shells off until it is turned off, the section leaves the screen or the scene resets.")
                     .font(.caption)
                     .foregroundColor(.editorInfo)
                     .fixedSize(horizontal: false, vertical: true)
