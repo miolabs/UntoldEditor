@@ -1169,7 +1169,7 @@ struct AssetBrowserView: View {
             openPanel.allowedContentTypes = [UTType(filenameExtension: "cube")!]
         }
 
-        openPanel.canChooseDirectories = (category == .materials || category == .streamModels)
+        openPanel.canChooseDirectories = (category == .materials || category == .streamModels || category == .gaussians)
         openPanel.allowsMultipleSelection = true
 
         guard let basePath = assetBasePath else { return }
@@ -1200,11 +1200,24 @@ struct AssetBrowserView: View {
                 }
 
             case "Gaussians":
-                // Copy the .ply / .untoldgs. Importing only copies: a .ply is cooked when the
-                // user asks for it, from the row's "Cook to .untoldgs…" context action.
-                let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent)
-                enqueueImport(destination: destURL, isFolder: false, batch: batch) { ctx in
-                    try ctx.copy(sourceURL, to: ctx.stagingURL, fileManager: fm)
+                if sourceURL.hasDirectoryPath {
+                    guard primaryGaussianAsset(in: sourceURL, fileManager: fm) != nil else {
+                        showStatus("No Gaussian asset found in selected folder", isError: true)
+                        continue
+                    }
+
+                    let destURL = categoryRoot.appendingPathComponent(sourceURL.lastPathComponent, isDirectory: true)
+                    enqueueImport(destination: destURL, isFolder: true, batch: batch) { ctx in
+                        try ctx.copy(sourceURL, to: ctx.stagingURL, fileManager: fm)
+                    }
+                } else {
+                    // Gaussian files are imported as a folder package so progressive tiers stay grouped.
+                    let destFolder = gaussianPackageFolder(for: sourceURL, in: categoryRoot)
+                    enqueueImport(destination: destFolder, isFolder: true, batch: batch) { ctx in
+                        _ = try importGaussianAsset(sourceURL: sourceURL, destinationFolder: ctx.stagingURL, fileManager: fm) {
+                            try ctx.copy($0, to: $1, fileManager: fm)
+                        }
+                    }
                 }
 
             case "Materials":
@@ -2119,12 +2132,18 @@ struct AssetBrowserView: View {
     /// refreshes as each one lands. A failed cook leaves the `.ply` untouched.
     private func cookGaussianSources(_ plyURLs: [URL]) {
         let settings = gaussianCookSettings
+        let gaussianRoot = assetBasePath?.appendingPathComponent(AssetCategory.gaussians.rawValue, isDirectory: true)
         showStatus(plyURLs.count == 1
             ? "Cooking \(plyURLs[0].lastPathComponent)..."
             : "Cooking \(plyURLs.count) Gaussian files (see Tasks)...")
         for plyURL in plyURLs {
             let name = plyURL.lastPathComponent
-            cookGaussianPLYTracked(plyURL: plyURL, settings: settings) { result in
+            let outputDirectory = gaussianRoot.flatMap { root -> URL? in
+                plyURL.deletingLastPathComponent().standardizedFileURL == root.standardizedFileURL
+                    ? gaussianPackageFolder(for: plyURL, in: root)
+                    : nil
+            }
+            cookGaussianPLYTracked(plyURL: plyURL, settings: settings, outputDirectory: outputDirectory) { result in
                 switch result {
                 case let .success(bake):
                     loadAssets()
@@ -2650,6 +2669,19 @@ struct AssetBrowserView: View {
             return
         }
 
+        // Models (.untold, .untoldpack, or a folder's primary) and Gaussian splats (.ply,
+        // baked .untoldgs, or an imported package folder) take the same path as a
+        // drag-and-drop onto the scene.
+        if let placeable = placeableAsset(for: asset) {
+            let placement = placeAsset(placeable, sceneGraphModel: sceneGraphModel, selectionManager: selectionManager)
+            showStatus(placement.statusMessage, isError: placement.isError)
+            return
+        }
+        if asset.isFolder, asset.category == AssetCategory.gaussians.rawValue {
+            showStatus(unsupportedAssetDropMessage(for: asset), isError: true)
+            return
+        }
+
         guard let asset = resolvedRuntimeAsset(for: asset) else {
             if asset.isFolder,
                asset.category == AssetCategory.models.rawValue || asset.category == AssetCategory.animations.rawValue
@@ -2663,15 +2695,9 @@ struct AssetBrowserView: View {
         let runtimeFilename = runtimeAssetFilenameForLoading(asset.path)
         let withExtension = asset.path.pathExtension
 
-        // Models (.untold) and Gaussian splats (.ply, or baked .untoldgs single file /
-        // progressive tiers) take the same path as a drag-and-drop onto the scene.
-        if let placeable = placeableAsset(for: asset) {
-            let placement = placeAsset(placeable, sceneGraphModel: sceneGraphModel, selectionManager: selectionManager)
-            showStatus(placement.statusMessage)
-        }
         // Handle Animation files (.untold runtime assets in Animations category)
-        else if asset.category == AssetCategory.animations.rawValue,
-                runtimeAnimationAssetExtensions.contains(withExtension.lowercased())
+        if asset.category == AssetCategory.animations.rawValue,
+           runtimeAnimationAssetExtensions.contains(withExtension.lowercased())
         {
             // Animations require a selected entity to work with
             guard let entityId = selectionManager.selectedEntity,
@@ -2816,6 +2842,7 @@ struct AssetBrowserView: View {
         destroyAllEntities()
         removeGizmo()
         EditorComponentsState.shared.clear()
+        EditorGaussianAssetState.shared.clear()
 
         // Load new scene
         deserializeScene(sceneData: sceneData)

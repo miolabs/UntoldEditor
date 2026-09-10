@@ -30,7 +30,7 @@ let package = Package(
             ],
             path: "Sources/UntoldEditor",
             resources: [
-                .process("Resources"),
+                .process("Resources/Thumbnails"),
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v5),

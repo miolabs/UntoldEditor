@@ -537,7 +537,7 @@ public struct EditorView: View {
             editor_parentEntity(childId: placement.entityId, parentId: parent)
         }
         editor_entities = getAllGameEntities()
-        showDropStatus(placement.statusMessage)
+        showDropStatus(placement.statusMessage, isError: placement.isError)
     }
 
     private func showDropStatus(_ message: String, isError: Bool = false) {
@@ -556,6 +556,7 @@ public struct EditorView: View {
 
     private enum BottomPanelTab: Hashable {
         case assets
+        case explore
         case console
         case tasks
     }
@@ -690,6 +691,7 @@ public struct EditorView: View {
     private var editorPanelTabs: some View {
         HStack(spacing: 2) {
             panelTabButton(.assets, title: "Assets", icon: "shippingbox")
+            panelTabButton(.explore, title: "Explore", icon: "square.grid.2x2")
             panelTabButton(.console, title: "Console", icon: "terminal")
             panelTabButton(.tasks, title: "Tasks", icon: "list.bullet.rectangle")
         }
@@ -737,6 +739,7 @@ public struct EditorView: View {
     private func panelTabHelp(_ tab: BottomPanelTab) -> String {
         switch tab {
         case .assets: return "Show Asset Browser. Right-click the asset area to import."
+        case .explore: return "Browse asset packs."
         case .console: return "Show Console"
         case .tasks: return "Show background tasks (exports, cooks, builds, loads)"
         }
@@ -745,6 +748,7 @@ public struct EditorView: View {
     private var bottomSearchPlaceholder: String {
         switch bottomPanelTab {
         case .assets: return "Filter assets"
+        case .explore: return "Filter packs"
         case .console: return "Filter console"
         case .tasks: return "Filter tasks"
         }
@@ -892,6 +896,10 @@ public struct EditorView: View {
                         editor_addEntityWithAsset: editor_addEntityWithAsset,
                         editor_loadSceneAuthoredFromAsset: editor_loadSceneAuthoredFromAsset
                     )
+                case .explore:
+                    AssetPackBrowserView(searchQuery: $bottomSearchQuery) {
+                        NotificationCenter.default.post(name: .assetBrowserReload, object: nil)
+                    }
                 case .console:
                     LogConsoleView(searchQuery: $bottomSearchQuery, autoScroll: $consoleAutoScroll)
                 case .tasks:
@@ -1242,6 +1250,7 @@ public struct EditorView: View {
             destroyAllEntities()
             removeGizmo()
             EditorComponentsState.shared.clear()
+            EditorGaussianAssetState.shared.clear()
             EditorUndoManager.shared.clear()
             GaussianTwinPreviewSettings.shared.sceneDidReset()
             sceneAuthoredGameCamera = nil
@@ -1269,6 +1278,7 @@ public struct EditorView: View {
         destroyAllEntities()
         removeGizmo()
         EditorComponentsState.shared.clear()
+        EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
         GaussianTwinPreviewSettings.shared.sceneDidReset()
         sceneAuthoredGameCamera = nil
@@ -1320,6 +1330,7 @@ public struct EditorView: View {
         destroyAllEntities()
         removeGizmo()
         EditorComponentsState.shared.clear()
+        EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
         GaussianTwinPreviewSettings.shared.sceneDidReset()
         sceneAuthoredGameCamera = nil
@@ -2143,12 +2154,17 @@ public struct EditorView: View {
             clearSceneBatches()
             GeometryStreamingSystem.shared.enabled = false
 
-            // Load Gaussian PLY using absolute path
-            setEntityGaussian(entityId: entityId, filename: absolutePath, withExtension: fileExtension)
+            loadEditorGaussianAuto(entityId: entityId, url: fileURL) { success in
+                if success {
+                    print("✅ Quick Preview Gaussian loaded: \(fileName).\(fileExtension)")
+                } else {
+                    print("⚠️ Failed to load Quick Preview Gaussian: \(fileName).\(fileExtension)")
+                }
+                sceneGraphModel.refreshHierarchy()
+            }
             if fromExploreMode == false {
                 revealCameraControlHintsIfNeeded()
             }
-            print("✅ Quick Preview Gaussian loaded: \(fileName).\(fileExtension)")
         } else if fileExtension == "json" {
             clearSceneBatches()
             GeometryStreamingSystem.shared.enabled = true
@@ -2567,8 +2583,14 @@ public struct EditorView: View {
             clearSceneBatches()
             GeometryStreamingSystem.shared.enabled = false
 
-            setEntityGaussian(entityId: entityId, filename: absolutePath, withExtension: fileExtension)
-            print("✅ Quick Preview Gaussian loaded: \(loadURL.lastPathComponent)")
+            loadEditorGaussianAuto(entityId: entityId, url: loadURL) { success in
+                if success {
+                    print("✅ Quick Preview Gaussian loaded: \(loadURL.lastPathComponent)")
+                } else {
+                    print("⚠️ Failed to load Quick Preview Gaussian: \(loadURL.lastPathComponent)")
+                }
+                sceneGraphModel.refreshHierarchy()
+            }
         }
 
         guard let camera = CameraSystem.shared.activeCamera,
@@ -2626,6 +2648,7 @@ public struct EditorView: View {
             {
                 QuickPreviewRuntimeExportCache.removeCacheDirectory(at: URL(fileURLWithPath: quickPreviewComp.runtimePreviewDirectoryPath))
             }
+            EditorGaussianAssetState.shared.clear(entityId: entityId)
             destroyEntity(entityId: entityId)
         }
 
