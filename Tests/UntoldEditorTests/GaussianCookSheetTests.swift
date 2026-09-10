@@ -3,8 +3,8 @@
 //  UntoldEditorTests
 //
 //  The "Cook to .untoldgs" path: settings → engine cook options, the bake beside the
-//  source .ply, the Tasks-panel wrapper the browser runs cooks through, and
-//  progressive tier detection for placement.
+//  source .ply, the Tasks-panel wrapper the browser runs cooks through, progressive
+//  tier detection for placement, and the sheet's empty state (nothing selected).
 //
 
 import simd
@@ -58,12 +58,26 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertEqual(settings.cookOptions.maxSplatCount, 123_456)
         XCTAssertTrue(gaussianCookTaskDetail(settings: settings).contains("budget 123,456"))
 
+        // The presets are the engine's caps, so the captions are checked against those
+        // constants rather than against the numbers they happen to be today.
+        let mobileCap = UntoldGSCookOptions.splatBudgetMobile
+        let overMobileCap = mobileCap + 1
+        XCTAssertEqual(mobileCap, GaussianRuntimeLimits.maxSplatsPerEntityMobile)
+        XCTAssertEqual(UntoldGSCookOptions.splatBudgetMac, GaussianRuntimeLimits.maxSplatsPerEntityMac)
         XCTAssertEqual(
-            gaussianBudgetCaption(sourceCount: 8_085_051, maxSplatCount: UntoldGSCookOptions.splatBudgetMobile),
-            "8,085,051 splats in the source; the budget keeps the 5,242,880 most important."
+            gaussianBudgetCaption(sourceCount: overMobileCap, maxSplatCount: mobileCap),
+            "\(GaussianSplatBudget.formatted(overMobileCap)) splats in the source; the budget keeps the \(GaussianSplatBudget.formatted(mobileCap)) most important."
+        )
+        XCTAssertEqual(
+            gaussianBudgetCaption(sourceCount: mobileCap, maxSplatCount: mobileCap),
+            "\(GaussianSplatBudget.formatted(mobileCap)) splats in the source, within the budget."
         )
         XCTAssertEqual(gaussianBudgetCaption(sourceCount: 1000, maxSplatCount: 5000), "1,000 splats in the source, within the budget.")
-        XCTAssertTrue(gaussianBudgetCaption(sourceCount: 8_085_051, maxSplatCount: nil).contains("do not load on Vision Pro"))
+        XCTAssertTrue(gaussianBudgetCaption(sourceCount: overMobileCap, maxSplatCount: nil).contains("do not load on Vision Pro"))
+        XCTAssertEqual(
+            gaussianBudgetCaption(sourceCount: mobileCap, maxSplatCount: nil),
+            "\(GaussianSplatBudget.formatted(mobileCap)) splats in the source, all kept."
+        )
         XCTAssertEqual(gaussianBudgetCaption(sourceCount: nil, maxSplatCount: nil), "No splat budget.")
 
         var report = UntoldGSCookReport.passthrough(splatCount: 10, shDegree: 0)
@@ -136,6 +150,36 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertEqual(gaussianCookSummary(report), "Kept 7 of 10 splats")
         XCTAssertEqual(gaussianCookFailureDetail(UntoldGSCookError.noSplatsLeftAfterPruning(report)), UntoldGSCookError.noSplatsLeftAfterPruning(report).description)
         XCTAssertEqual(gaussianCookFailureDetail(CocoaError(.fileNoSuchFile)), CocoaError(.fileNoSuchFile).localizedDescription)
+    }
+
+    func test_sheetWithoutSourcesCannotCook() {
+        let ply = URL(fileURLWithPath: "/tmp/Gaussians/room.PLY")
+        let baked = URL(fileURLWithPath: "/tmp/Gaussians/room.untoldgs")
+        let settings = GaussianCookSettings()
+
+        XCTAssertEqual(gaussianCookSheetTitle(for: []), "Select .ply files to cook")
+        XCTAssertEqual(gaussianCookSheetTitle(for: [ply]), "Cook room.PLY to .untoldgs")
+        XCTAssertEqual(gaussianCookSheetTitle(for: [ply, ply]), "Cook 2 .ply files to .untoldgs")
+
+        XCTAssertFalse(gaussianCookSheetCanCook(sourceURLs: [], settings: settings), "nothing to cook")
+        XCTAssertTrue(gaussianCookSheetCanCook(sourceURLs: [ply], settings: settings))
+        var collapsed = settings
+        collapsed.scale = 0
+        XCTAssertFalse(gaussianCookSheetCanCook(sourceURLs: [ply], settings: collapsed), "a zero scale still blocks the cook")
+
+        XCTAssertEqual(
+            gaussianCookSourceCaption(sourceURLs: [], sourceSplatCount: nil, maxSplatCount: settings.cookOptions.maxSplatCount),
+            "No .ply file selected; nothing to cook."
+        )
+        XCTAssertEqual(
+            gaussianCookSourceCaption(sourceURLs: [ply], sourceSplatCount: 1000, maxSplatCount: 5000),
+            gaussianBudgetCaption(sourceCount: 1000, maxSplatCount: 5000)
+        )
+
+        // The browser presents the sheet for a request, and a request needs a .ply.
+        XCTAssertNil(GaussianCookRequest(sources: []))
+        XCTAssertNil(GaussianCookRequest(sources: [baked]), "baked files are imported as they are")
+        XCTAssertEqual(GaussianCookRequest(sources: [baked, ply])?.sourceURLs, [ply])
     }
 
     func test_trackedCookSucceedsAsATask() async throws {
