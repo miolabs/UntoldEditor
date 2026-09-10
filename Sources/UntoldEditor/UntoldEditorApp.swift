@@ -275,14 +275,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         EditorPlaybackSettings.shared.useSceneCameraDuringPlay.toggle()
     }
 
-    @objc private func menuToggleSplatDebug(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String, let option = SplatDebugOption(rawValue: raw) else {
-            return
-        }
-        option.isEnabled.toggle()
-        sender.state = option.isEnabled ? .on : .off
-    }
-
     @objc private func menuTogglePreviewSplatTwins() {
         GaussianTwinPreviewSettings.shared.isEnabled.toggle()
     }
@@ -294,6 +286,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         EditorNavigationSettings.shared.style = style
+    }
+
+    @objc private func menuToggleSplatDebug(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let option = SplatDebugOption(rawValue: raw) else {
+            return
+        }
+        option.isEnabled.toggle()
+        sender.state = option.isEnabled ? .on : .off
     }
 
     /// Animation + render-pause are driven by EditorView (which observes these

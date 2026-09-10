@@ -10,7 +10,7 @@
 //
 //  The pure parts of asset drag-and-drop: the drag payload round trip, which
 //  browser rows resolve to a placeable model or Gaussian splat (including the
-//  progressive tier detection), the message for everything else, and the
+//  package folders an import creates), the message for everything else, and the
 //  ground-plane hit that positions a viewport drop. The gestures themselves are
 //  not unit-tested.
 //
@@ -99,6 +99,13 @@ final class AssetPlacementTests: XCTestCase {
         XCTAssertEqual(placeableAsset(for: asset), .model(url))
     }
 
+    func test_modelPackIsPlaceable() {
+        let url = URL(fileURLWithPath: "/tmp/Project/Models/props.untoldpack")
+        let asset = Asset(name: "props.untoldpack", category: AssetCategory.models.rawValue, path: url)
+
+        XCTAssertEqual(placeableAsset(for: asset), .model(url))
+    }
+
     func test_modelFolderResolvesToItsPrimaryRuntimeAsset() throws {
         let directory = try makeTemporaryDirectory()
         let folder = directory.appendingPathComponent("Chair", isDirectory: true)
@@ -152,10 +159,44 @@ final class AssetPlacementTests: XCTestCase {
         let tier = directory.appendingPathComponent("room_lod2.untoldgs")
         let asset = Asset(name: "room_lod2.untoldgs", category: AssetCategory.gaussians.rawValue, path: tier)
 
+        XCTAssertEqual(placeableAsset(for: asset), .gaussian(tier))
+        // The editor's loader, not the placement, recognises the tier as a progressive set.
+        guard case let .progressive(baseFilename, levelCount, _)? = editorGaussianLoadPlan(for: tier) else {
+            return XCTFail("Expected the tier to load as a progressive set")
+        }
+        XCTAssertEqual(baseFilename, directory.appendingPathComponent("room").path)
+        XCTAssertEqual(levelCount, 3)
+    }
+
+    func test_gaussianPackageFolderResolvesToItsPrimaryAsset() throws {
+        // An import keeps a capture's files in a folder named after it; the row is the folder.
+        let directory = try makeTemporaryDirectory()
+        let package = directory.appendingPathComponent("room", isDirectory: true)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        for level in 0 ..< 3 {
+            try touch(package.appendingPathComponent("room_lod\(level).untoldgs"))
+        }
+        try touch(package.appendingPathComponent("room.ply"))
+        let asset = Asset(name: "room", category: AssetCategory.gaussians.rawValue, path: package, isFolder: true)
+
+        guard case let .gaussian(url)? = placeableAsset(for: asset) else {
+            return XCTFail("Expected the package folder to resolve to a Gaussian")
+        }
         XCTAssertEqual(
-            placeableAsset(for: asset),
-            .progressiveGaussian(baseURL: directory.appendingPathComponent("room"), levelCount: 3)
+            url.resolvingSymlinksInPath(),
+            package.appendingPathComponent("room_lod0.untoldgs").resolvingSymlinksInPath()
         )
+    }
+
+    func test_gaussianFolderWithoutAnAssetIsNotPlaceable() throws {
+        let directory = try makeTemporaryDirectory()
+        let folder = directory.appendingPathComponent("Scans", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try touch(folder.appendingPathComponent("notes.json"))
+        let asset = Asset(name: "Scans", category: AssetCategory.gaussians.rawValue, path: folder, isFolder: true)
+
+        XCTAssertNil(placeableAsset(for: asset))
+        XCTAssertEqual(unsupportedAssetDropMessage(for: asset), "No Gaussian asset found in Scans")
     }
 
     func test_extensionMatchingIgnoresCase() {
@@ -186,12 +227,9 @@ final class AssetPlacementTests: XCTestCase {
             XCTAssertNil(placeableAsset(for: asset), "\(category)/\(filename) should not be placeable")
             XCTAssertEqual(
                 unsupportedAssetDropMessage(for: asset),
-                "Only models (.untold) and Gaussian splats (.ply, .untoldgs) can be dropped into the scene"
+                "Only models (.untold, .untoldpack) and Gaussian splats (.ply, .untoldgs) can be dropped into the scene"
             )
         }
-
-        let gaussianFolder = Asset(name: "Scans", category: AssetCategory.gaussians.rawValue, path: directory, isFolder: true)
-        XCTAssertNil(placeableAsset(for: gaussianFolder))
     }
 
     // MARK: - Ground-plane hit
