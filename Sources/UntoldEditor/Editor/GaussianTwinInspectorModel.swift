@@ -203,14 +203,19 @@ final class GaussianTwinInspectorModel: ObservableObject {
     // MARK: - Reading
 
     /// Resolves the target and reads the link from the file (one read, one decode). Clears
-    /// the status.
+    /// the status. The file is the source of truth: a placement whose link component says
+    /// something else (the record was edited out of process, `untoldengine gaussian-link`
+    /// with the editor open) is brought in line, twin included, so the section never shows
+    /// the file's numbers over a splat drawn with the old ones.
     func reload() {
         do {
             let loaded = try GaussianTwinLinkPersistence.loadTarget(entityId: entityId)
             target = loaded.target
             decoded = loaded.decoded
-            link = try GaussianTwinLinkPersistence.readTwinLink(target: loaded.target, decoded: loaded.decoded)
+            let stored = try GaussianTwinLinkPersistence.readTwinLink(target: loaded.target, decoded: loaded.decoded)
+            link = stored
             status = nil
+            mirrorOntoScene(stored, target: loaded.target)
         } catch {
             target = nil
             decoded = nil
@@ -433,6 +438,16 @@ final class GaussianTwinInspectorModel: ObservableObject {
         let backed = backedEntities(target)
         GaussianTwinAlignMode.shared.update(owner: self, entities: Set(backed))
         for entityId in backed {
+            GaussianTwinLinkPersistence.applyLinkComponent(link, to: entityId, untoldURL: target.untoldURL)
+            GaussianTwinLinkPersistence.applyPreview(entityId: entityId)
+        }
+    }
+
+    /// Brings every placement whose link component differs from the persisted `link` in
+    /// line with it (component and preview). Placements already in step are left alone, so
+    /// a running twin is not touched for nothing.
+    private func mirrorOntoScene(_ link: UntoldAssetPatcher.GaussianAssetLink?, target: GaussianTwinLinkTarget) {
+        for entityId in backedEntities(target) where !GaussianTwinLinkPersistence.linkComponentMatches(link, on: entityId, untoldURL: target.untoldURL) {
             GaussianTwinLinkPersistence.applyLinkComponent(link, to: entityId, untoldURL: target.untoldURL)
             GaussianTwinLinkPersistence.applyPreview(entityId: entityId)
         }

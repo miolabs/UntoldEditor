@@ -400,6 +400,24 @@ enum GaussianTwinLinkPersistence {
         component.alignment = link.alignment
     }
 
+    /// Whether `entityId` already carries what `applyLinkComponent(link, …)` would set: no
+    /// component for a nil link, else one with the same payload (as resolved), flags, LOD
+    /// table, margin, exposure offset, swap distance and alignment.
+    static func linkComponentMatches(_ link: UntoldAssetPatcher.GaussianAssetLink?, on entityId: EntityID, untoldURL: URL) -> Bool {
+        let component = scene.get(component: GaussianAssetLinkComponent.self, for: entityId)
+        guard let link else { return component == nil }
+        guard let component else { return false }
+        return component.payloadURL == resolvedPayloadURL(path: link.payloadPath, untoldURL: untoldURL)
+            && component.flags == link.flags
+            && component.lodCount == link.lodCount
+            && component.lodSplatCounts == link.lodSplatCounts
+            && component.lodSwitchScreenHeights == link.lodSwitchScreenHeights
+            && component.occluderShrinkMeters == link.occluderShrinkMeters
+            && component.exposureOffsetEV == link.exposureOffsetEV
+            && component.swapDistanceMeters == link.swapDistanceMeters
+            && component.alignment == link.alignment
+    }
+
     /// The options the viewport twin of `entityId` runs: the link's, forced to show the twin
     /// over the mesh while the entity is in align mode (`GaussianTwinAlignMode`).
     static func previewOptions(entityId: EntityID, link component: GaussianAssetLinkComponent) -> GaussianTwinOptions {

@@ -217,6 +217,69 @@ final class GaussianTwinAlignmentTests: XCTestCase {
         XCTAssertEqual(try storedLink()?.alignment?.translation, SIMD3<Float>(0, 0.5, 0))
     }
 
+    /// The record was edited out of process (`untoldengine gaussian-link --in-place` with the
+    /// editor open): no notification reaches the editor, but the next model over the entity
+    /// (a reselection) reads the file and brings the placements' link components and twins in
+    /// line with it, so the fields never show numbers the splat is not drawn with.
+    func test_freshModel_mirrorsARecordEditedOutOfProcessOntoTheScene() throws {
+        let model = makeModel()
+        model.assign(payloadURL: payload)
+        let second = GaussianTwinTestFixtures.makeMeshEntity(name: "Chair 2", assetURL: untold)
+        model.setSwapDistance(5)
+        model.flushPendingPersist()
+        XCTAssertNil(linkComponent()?.alignment)
+        XCTAssertEqual(twin(second)?.options.swapDistanceMeters, 5)
+
+        var edited = try XCTUnwrap(try storedLink())
+        edited.alignment = sample
+        edited.swapDistanceMeters = 2
+        let patched = try UntoldAssetPatcher.settingGaussianAsset(edited, onEntity: 0, in: Data(contentsOf: untold))
+        try patched.write(to: untold)
+        XCTAssertNil(linkComponent()?.alignment, "nothing in the editor noticed")
+        XCTAssertEqual(model.link?.swapDistanceMeters, 5)
+
+        let reopened = makeModel()
+        XCTAssertEqual(reopened.link, edited)
+        XCTAssertEqual(reopened.alignment, sample)
+        for placement in [entity, second] {
+            XCTAssertEqual(linkComponent(placement)?.alignment, sample, "the link component follows the file")
+            XCTAssertEqual(linkComponent(placement)?.swapDistanceMeters, 2)
+            XCTAssertEqual(twin(placement)?.options.alignment, sample, "and so does the previewed twin")
+            XCTAssertEqual(twin(placement)?.options.swapDistanceMeters, 2)
+        }
+        XCTAssertFalse(reopened.hasPendingPersist, "mirroring the file is not an edit")
+        XCTAssertNil(reopened.status)
+
+        // An edit from here starts from what is drawn.
+        reopened.setAlignmentOffset(.zero)
+        XCTAssertEqual(twin()?.options.alignment, GaussianSplatAlignment(yawDegrees: 12, scale: 1.05))
+        undoManager.undo()
+        XCTAssertEqual(twin()?.options.alignment, sample, "undo lands on the file's alignment, which is what was drawn")
+
+        // A record removed out of process takes the component and the twin with it.
+        try UntoldAssetPatcher.removingGaussianAsset(onEntity: 0, in: Data(contentsOf: untold)).write(to: untold)
+        let reopenedAgain = makeModel()
+        XCTAssertNil(reopenedAgain.link)
+        XCTAssertNil(linkComponent())
+        XCTAssertNil(twin())
+    }
+
+    func test_freshModel_leavesASceneAlreadyInStepAlone() throws {
+        let model = makeModel()
+        model.assign(payloadURL: payload)
+        model.setAlignmentYawDegrees(30)
+        model.flushPendingPersist()
+        let before = try XCTUnwrap(twin())
+        XCTAssertTrue(GaussianTwinLinkPersistence.linkComponentMatches(model.link, on: entity, untoldURL: untold))
+
+        let reopened = makeModel()
+        XCTAssertEqual(reopened.link, model.link)
+        XCTAssertTrue(twin() === before, "the running twin is not relinked")
+        XCTAssertEqual(before.options.alignment?.yawDegrees, 30)
+        XCTAssertFalse(GaussianTwinLinkPersistence.linkComponentMatches(nil, on: entity, untoldURL: untold))
+        XCTAssertTrue(GaussianTwinLinkPersistence.linkComponentMatches(nil, on: GaussianTwinTestFixtures.makeMeshEntity(name: "Table", assetURL: untold), untoldURL: untold), "no link, no component: in step")
+    }
+
     func test_alignmentValues_areClampedToTheirRanges() throws {
         let model = makeModel()
         model.assign(payloadURL: payload)
