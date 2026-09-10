@@ -58,12 +58,26 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertEqual(settings.cookOptions.maxSplatCount, 123_456)
         XCTAssertTrue(gaussianCookTaskDetail(settings: settings).contains("budget 123,456"))
 
+        // The presets are the engine's caps, so the captions are checked against those
+        // constants rather than against the numbers they happen to be today.
+        let mobileCap = UntoldGSCookOptions.splatBudgetMobile
+        let overMobileCap = mobileCap + 1
+        XCTAssertEqual(mobileCap, GaussianRuntimeLimits.maxSplatsPerEntityMobile)
+        XCTAssertEqual(UntoldGSCookOptions.splatBudgetMac, GaussianRuntimeLimits.maxSplatsPerEntityMac)
         XCTAssertEqual(
-            gaussianBudgetCaption(sourceCount: 8_085_051, maxSplatCount: UntoldGSCookOptions.splatBudgetMobile),
-            "8,085,051 splats in the source; the budget keeps the 5,242,880 most important."
+            gaussianBudgetCaption(sourceCount: overMobileCap, maxSplatCount: mobileCap),
+            "\(GaussianSplatBudget.formatted(overMobileCap)) splats in the source; the budget keeps the \(GaussianSplatBudget.formatted(mobileCap)) most important."
+        )
+        XCTAssertEqual(
+            gaussianBudgetCaption(sourceCount: mobileCap, maxSplatCount: mobileCap),
+            "\(GaussianSplatBudget.formatted(mobileCap)) splats in the source, within the budget."
         )
         XCTAssertEqual(gaussianBudgetCaption(sourceCount: 1000, maxSplatCount: 5000), "1,000 splats in the source, within the budget.")
-        XCTAssertTrue(gaussianBudgetCaption(sourceCount: 8_085_051, maxSplatCount: nil).contains("do not load on Vision Pro"))
+        XCTAssertTrue(gaussianBudgetCaption(sourceCount: overMobileCap, maxSplatCount: nil).contains("do not load on Vision Pro"))
+        XCTAssertEqual(
+            gaussianBudgetCaption(sourceCount: mobileCap, maxSplatCount: nil),
+            "\(GaussianSplatBudget.formatted(mobileCap)) splats in the source, all kept."
+        )
         XCTAssertEqual(gaussianBudgetCaption(sourceCount: nil, maxSplatCount: nil), "No splat budget.")
 
         var report = UntoldGSCookReport.passthrough(splatCount: 10, shDegree: 0)
