@@ -77,7 +77,7 @@ enum GaussianTwinLinkPersistence {
 
     /// Whether the viewport preview is on. The live editor reads the View menu toggle; tests
     /// pin it without touching `UserDefaults.standard`.
-    static var previewEnabled: () -> Bool = { GaussianTwinPreviewSettings.shared.isEnabled }
+    nonisolated(unsafe) static var previewEnabled: () -> Bool = { GaussianTwinPreviewSettings.shared.isEnabled }
 
     // MARK: - Target resolution
 
