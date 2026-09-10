@@ -47,6 +47,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var splatBlendCapItems: [SplatBlendCapOption: NSMenuItem] = [:]
     private var splatWorkingSetItems: [EditorSplatWorkingSet: NSMenuItem] = [:]
     private var splatLevelModeItems: [SplatLevelModeOption: NSMenuItem] = [:]
+    private var previewSplatTwinsItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_: Notification) {
         Logger.log(message: "Launching \(appName) v\(Self.editorVersion)")
@@ -232,6 +233,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         splatDebugItem.submenu = splatDebugMenu
         viewMenu.addItem(splatDebugItem)
 
+        // Mesh-to-splat twin swaps (package UntoldGaussianTwins) run in the viewport while this
+        // is on, so a link authored in the Inspector's Splat Twin section can be checked live.
+        previewSplatTwinsItem = addItem(to: viewMenu, title: "Preview Splat Twins", action: #selector(menuTogglePreviewSplatTwins), key: "")
+        previewSplatTwinsItem?.toolTip = "Swap meshes linked to a .untoldgs twin for the splat as the scene camera approaches, as GaussianTwinSystem does in an app."
+
         NSApp.mainMenu = mainMenu
     }
 
@@ -263,6 +269,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for (choice, item) in splatBlendCapItems {
             item.state = choice == blendCap ? .on : .off
         }
+        previewSplatTwinsItem?.state = GaussianTwinPreviewSettings.shared.isEnabled ? .on : .off
         let store = EditorEngineStatsStore.shared
         showFPSItem?.state = store.overlayMode != .off ? .on : .off
         showFPSAdvancedItem?.state = store.overlayMode == .advanced ? .on : .off
@@ -333,6 +340,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func menuToggleSceneCam() {
         EditorPlaybackSettings.shared.useSceneCameraDuringPlay.toggle()
+    }
+
+    @objc private func menuTogglePreviewSplatTwins() {
+        GaussianTwinPreviewSettings.shared.isEnabled.toggle()
     }
 
     @objc private func menuSelectNavigationStyle(_ sender: NSMenuItem) {

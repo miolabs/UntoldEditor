@@ -158,6 +158,8 @@ public struct EditorView: View {
         registerEditorRenderExtension()
         // Compiles and loads the open project's code components and editor extensions.
         ComponentLibraryController.shared.activate()
+        // Splat twin swaps preview in the viewport (View > Preview Splat Twins, on by default).
+        GaussianTwinPreviewSettings.shared.activate()
         // The working set the frame draws from (View > Splat Debug > Working Set).
         EditorGaussianRuntimeSettings.shared.activate()
 
@@ -1515,6 +1517,7 @@ public struct EditorView: View {
             EditorUndoManager.shared.clear()
             EditorMenuPluginHost.shared.sceneDidReset()
             EditorSceneDirtyState.shared.clear()
+            GaussianTwinPreviewSettings.shared.sceneDidReset()
             sceneAuthoredGameCamera = nil
             deserializeScene(sceneData: sceneData, onGaussianEntityRestored: restoreEditorGaussianState)
             NotificationCenter.default.post(name: .editorPostFXStateDidChange, object: nil)
@@ -1545,6 +1548,7 @@ public struct EditorView: View {
         EditorUndoManager.shared.clear()
         EditorMenuPluginHost.shared.sceneDidReset()
         EditorSceneDirtyState.shared.clear()
+        GaussianTwinPreviewSettings.shared.sceneDidReset()
         sceneAuthoredGameCamera = nil
 
         deserializeScene(sceneData: sceneData, onGaussianEntityRestored: restoreEditorGaussianState)
@@ -1647,6 +1651,7 @@ public struct EditorView: View {
         EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
         EditorMenuPluginHost.shared.sceneDidReset()
+        GaussianTwinPreviewSettings.shared.sceneDidReset()
         sceneAuthoredGameCamera = nil
 
         let light = createEntity()
