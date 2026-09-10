@@ -14,6 +14,7 @@ let package = Package(
         .package(url: "https://github.com/untoldengine/UntoldEngine.git", branch: "develop"),
         // Or pin to a release:
         // .package(url: "https://github.com/untoldengine/UntoldEngine.git", exact: "0.19.1"),
+        .package(url: "https://github.com/miolabs/UntoldGaussianTwins.git", branch: "main"),
     ],
     targets: [
         .executableTarget(
@@ -21,6 +22,7 @@ let package = Package(
             dependencies: [
                 .product(name: "UntoldEngine", package: "UntoldEngine"),
                 .product(name: "UntoldComponentKit", package: "UntoldEngine"),
+                .product(name: "UntoldGaussianTwins", package: "UntoldGaussianTwins"),
             ],
             path: "Sources/UntoldEditor",
             resources: [
