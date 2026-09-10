@@ -204,7 +204,7 @@ final class GaussianTwinAlignmentTests: XCTestCase {
         XCTAssertNil(model.link?.alignment)
     }
 
-    func test_assigningAnotherPayload_keepsTheAlignment() throws {
+    func test_assigningAnotherPayload_keepsTheAlignmentAndSaysSo() throws {
         let model = makeModel()
         model.assign(payloadURL: payload)
         model.setAlignmentOffset(SIMD3<Float>(0, 0.5, 0))
@@ -215,6 +215,19 @@ final class GaussianTwinAlignmentTests: XCTestCase {
         XCTAssertEqual(model.link?.payloadPath, "Chair_v2.untoldgs")
         XCTAssertEqual(model.link?.alignment?.translation, SIMD3<Float>(0, 0.5, 0), "a re-cook shares the capture's frame")
         XCTAssertEqual(try storedLink()?.alignment?.translation, SIMD3<Float>(0, 0.5, 0))
+        XCTAssertEqual(
+            model.status,
+            GaussianTwinInspectorModel.Status(message: "Linked Chair_v2.untoldgs (9 splats). Keeping the alignment stored for Chair.untoldgs (offset 0, 0.50, 0 m · yaw 0° · scale 1.00); Reset it if this capture has its own frame.", isError: false),
+            "another capture is told the alignment came along, as the CLI warns"
+        )
+
+        model.assign(payloadURL: other)
+        XCTAssertEqual(model.status?.message, "Linked Chair_v2.untoldgs (9 splats).", "the same payload again: nothing to point out")
+
+        model.resetAlignment()
+        model.flushPendingPersist()
+        model.assign(payloadURL: payload)
+        XCTAssertEqual(model.status?.message, "Linked Chair.untoldgs (4 splats).", "and nothing without an alignment to keep")
     }
 
     /// The record was edited out of process (`untoldengine gaussian-link --in-place` with the

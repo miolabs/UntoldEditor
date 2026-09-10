@@ -302,7 +302,7 @@ final class GaussianTwinInspectorModel: ObservableObject {
         do {
             let stored = GaussianTwinLinkPersistence.storedPayloadPath(payloadURL: payloadURL, untoldURL: target.untoldURL)
             // The alignment stays too: a re-cook of the same capture shares its frame, and a
-            // different one is a Reset away.
+            // different one is a Reset away — the status says so, as the CLI warns.
             let newLink = try GaussianTwinLinkPersistence.makeLink(
                 payloadURL: payloadURL,
                 untoldURL: target.untoldURL,
@@ -319,6 +319,10 @@ final class GaussianTwinInspectorModel: ObservableObject {
             var message = "Linked \(payloadURL.lastPathComponent) (\(splats.formatted()) splats)."
             if stored.isRelative == false {
                 message += " Stored by file name only (another volume): keep it next to \(target.untoldURL.lastPathComponent)."
+            }
+            if let previous, previous.alignment != nil, previous.payloadPath != newLink.payloadPath {
+                let previousName = (previous.payloadPath as NSString).lastPathComponent
+                message += " Keeping the alignment stored for \(previousName) (\(GaussianTwinInspector.alignmentDescription(newLink.alignment))); Reset it if this capture has its own frame."
             }
             status = Status(message: message, isError: false)
         } catch {
