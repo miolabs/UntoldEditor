@@ -192,6 +192,96 @@ func gaussianBudgetCaption(sourceCount: Int?, maxSplatCount: Int?) -> String {
     return "\(source) splats in the source; the budget keeps the \(GaussianSplatBudget.formatted(maxSplatCount)) most important."
 }
 
+/// What the sheet knows about a source `.ply` from its header and size alone: enough for the
+/// captions, without reading the body.
+struct GaussianCookSourceInfo: Equatable {
+    var splatCount: Int
+    /// Spherical-harmonics degree the file stores (0 when it has no `f_rest_*` properties).
+    var shDegree: Int
+    /// The file's bytes on disk.
+    var fileBytes: Int
+
+    /// Header-only read: the splat count through the engine's reader and the degree from the
+    /// `f_rest_N` property count of the first 100 KB (3 × ((d + 1)² − 1) coefficients).
+    static func read(from url: URL, fileManager fm: FileManager = .default) throws -> GaussianCookSourceInfo {
+        let splatCount = try PLYReader.readGaussianSplatCount(from: url)
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let prefix = try handle.read(upToCount: 100_000) ?? Data()
+        let bytes = (try? fm.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
+        return GaussianCookSourceInfo(splatCount: splatCount, shDegree: shDegree(fromHeaderPrefix: prefix), fileBytes: bytes)
+    }
+
+    static func shDegree(fromHeaderPrefix prefix: Data) -> Int {
+        guard let text = String(data: prefix, encoding: .ascii) ?? String(data: prefix, encoding: .isoLatin1) else { return 0 }
+        let header = text.components(separatedBy: "end_header").first ?? text
+        let rest = header.components(separatedBy: .newlines).filter { line in
+            let fields = line.split(separator: " ")
+            return fields.count == 3 && fields[0] == "property" && fields[2].hasPrefix("f_rest_")
+        }.count
+        switch rest {
+        case 45...: return 3
+        case 24...: return 2
+        case 9...: return 1
+        default: return 0
+        }
+    }
+}
+
+/// Process memory a cook of a `.ply` of `fileBytes` peaks at, in bytes: the reader holds the
+/// file and its decoded splat and SH arrays, the cook copies them and the writer packs the
+/// chunks and the coarse levels — about four times the file (a 2.25 GiB degree-3 capture of
+/// 10 M splats peaked at 9.9 GiB).
+func gaussianCookEstimatedPeakBytes(fileBytes: Int) -> Int {
+    fileBytes * 4
+}
+
+/// Caption under the source row: what the cook costs in memory, and a warning when the
+/// estimate does not fit the machine. Nil for an empty or unreadable source.
+func gaussianCookMemoryCaption(fileBytes: Int, physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> String? {
+    guard fileBytes > 0 else { return nil }
+    let peak = gaussianCookEstimatedPeakBytes(fileBytes: fileBytes)
+    let text = "The cook needs about \(gaussianCookFormatGiB(peak)) of memory (this Mac has \(gaussianCookFormatGiB(Int(physicalMemory))))"
+    if Double(peak) > Double(physicalMemory) * 0.75 {
+        return text + "; expect heavy swapping — close other apps or cook on a Mac with more memory."
+    }
+    return text + "."
+}
+
+/// Bytes as a short gibibyte figure for the captions ("9.4 GB", "512 MB").
+func gaussianCookFormatGiB(_ bytes: Int) -> String {
+    let value = Double(bytes)
+    if bytes >= 1 << 30 {
+        return String(format: "%.1f GB", value / Double(1 << 30))
+    }
+    return String(format: "%.0f MB", value / Double(1 << 20))
+}
+
+/// Caption under the budget row: what the cooked file costs at runtime on this Mac — the
+/// packed records (16 bytes plus the SH block per kept splat) against the engine's paging
+/// threshold, so the user knows whether the file loads whole or pages from disk, and the
+/// working set the frame draws from.
+func gaussianCookRuntimeCaption(
+    keptSplatCount: Int,
+    shDegree: Int,
+    residencyBudgetBytes: Int = GaussianPagingPolicy.residencyBudgetBytes(),
+    pagePoolMaxBytes: Int = GaussianPagingPolicy.pagePoolMaxBytes,
+    workingSetSplats: Int = GaussianRuntimeLimits.workingSetSplatsOverride ?? GaussianRuntimeLimits.workingSetSplats
+) -> String {
+    let shBytes = shDegree > 0 ? UntoldGSFormat.shCoefficientCount(degree: UInt8(min(shDegree, Int(UntoldGSFormat.maxSHDegree)))) : 0
+    let packed = GaussianPagingPolicy.assetBytes(splatCount: keptSplatCount, shBytesPerSplat: shBytes)
+    let threshold = GaussianPagingPolicy.pagingThresholdBytes(residencyBudgetBytes: residencyBudgetBytes)
+    var caption = "About \(gaussianCookFormatGiB(packed)) of packed splats at runtime: "
+    if packed > threshold {
+        let pool = min(packed, residencyBudgetBytes, pagePoolMaxBytes)
+        caption += "pages from disk (above \(gaussianCookFormatGiB(threshold))) through a \(gaussianCookFormatGiB(pool)) pool"
+    } else {
+        caption += "loads whole (below \(gaussianCookFormatGiB(threshold)))"
+    }
+    caption += "; the frame draws at most \(GaussianSplatBudget.formatted(workingSetSplats)) splats."
+    return caption
+}
+
 /// Translation that moves a capture's bounding box, after `transform` has been applied to
 /// it, where `mode` says. The box is transformed corner by corner so a flip or scale is
 /// accounted for before the offset is measured.
@@ -824,7 +914,11 @@ struct GaussianCookSheet: View {
     @Binding var settings: GaussianCookSettings
     var onCook: () -> Void
     var onCancel: () -> Void
-    @State private var sourceSplatCount: Int?
+    @State private var sourceInfo: GaussianCookSourceInfo?
+
+    private var sourceSplatCount: Int? {
+        sourceInfo?.splatCount
+    }
 
     private let shDegreeChoices: [(label: String, value: Int?)] = [
         ("Source", nil), ("0 (none)", 0), ("1", 1), ("2", 2), ("3", 3),
@@ -907,9 +1001,23 @@ struct GaussianCookSheet: View {
                 }
                 GridRow {
                     Text("")
-                    Text(gaussianCookSourceCaption(sourceURLs: sourceURLs, sourceSplatCount: sourceSplatCount, maxSplatCount: settings.cookOptions.maxSplatCount))
-                        .font(.caption)
-                        .foregroundColor(.editorTextSecondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(gaussianCookSourceCaption(sourceURLs: sourceURLs, sourceSplatCount: sourceSplatCount, maxSplatCount: settings.cookOptions.maxSplatCount))
+                        if let sourceInfo {
+                            // The runtime cost of the kept splats, so the paging threshold and
+                            // the working set are no surprise once the file is placed.
+                            Text(gaussianCookRuntimeCaption(
+                                keptSplatCount: min(sourceInfo.splatCount, settings.cookOptions.maxSplatCount ?? sourceInfo.splatCount),
+                                shDegree: settings.shDegree ?? sourceInfo.shDegree
+                            ))
+                            if let memory = gaussianCookMemoryCaption(fileBytes: sourceInfo.fileBytes) {
+                                Text(memory)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundColor(.editorTextSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
                 GridRow {
                     Text("Recenter")
@@ -945,10 +1053,10 @@ struct GaussianCookSheet: View {
         .task(id: sourceURLs) {
             // Header-only read, so it is cheap however large the capture; batches show no count.
             guard sourceURLs.count == 1, let url = sourceURLs.first else {
-                sourceSplatCount = nil
+                sourceInfo = nil
                 return
             }
-            sourceSplatCount = try? PLYReader.readGaussianSplatCount(from: url)
+            sourceInfo = try? GaussianCookSourceInfo.read(from: url)
         }
     }
 }

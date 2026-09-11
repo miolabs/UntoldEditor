@@ -512,6 +512,57 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertEqual(gaussianCookTaskDetail(settings: settings), "→ .untoldgs, 1 coarse level")
     }
 
+    // MARK: - Cost captions
+
+    func test_sourceInfoReadsTheHeaderOnly() throws {
+        let plyURL = try makeTemporaryPLY(named: "chair.ply", splatCount: 200)
+        let info = try GaussianCookSourceInfo.read(from: plyURL)
+        XCTAssertEqual(info.splatCount, 200)
+        XCTAssertEqual(info.shDegree, 0, "the fixture carries no f_rest_* block")
+        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: plyURL.path)[.size] as? NSNumber)
+        XCTAssertEqual(info.fileBytes, size.intValue)
+
+        func header(rest: Int) -> Data {
+            var text = "ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+            for index in 0 ..< rest {
+                text += "property float f_rest_\(index)\n"
+            }
+            text += "property float opacity\nend_header\n"
+            return Data(text.utf8)
+        }
+        XCTAssertEqual(GaussianCookSourceInfo.shDegree(fromHeaderPrefix: header(rest: 0)), 0)
+        XCTAssertEqual(GaussianCookSourceInfo.shDegree(fromHeaderPrefix: header(rest: 9)), 1)
+        XCTAssertEqual(GaussianCookSourceInfo.shDegree(fromHeaderPrefix: header(rest: 24)), 2)
+        XCTAssertEqual(GaussianCookSourceInfo.shDegree(fromHeaderPrefix: header(rest: 45)), 3)
+    }
+
+    func test_memoryCaptionEstimatesFourTimesTheFile() {
+        let file = 2250 << 20 // the 10 M-splat degree-3 capture: 2.25 GiB, peaked at 9.9 GiB
+        XCTAssertEqual(gaussianCookEstimatedPeakBytes(fileBytes: file), file * 4)
+        XCTAssertEqual(
+            gaussianCookMemoryCaption(fileBytes: file, physicalMemory: 128 << 30),
+            "The cook needs about 8.8 GB of memory (this Mac has 128.0 GB)."
+        )
+        XCTAssertEqual(
+            gaussianCookMemoryCaption(fileBytes: file, physicalMemory: 8 << 30),
+            "The cook needs about 8.8 GB of memory (this Mac has 8.0 GB); expect heavy swapping — close other apps or cook on a Mac with more memory."
+        )
+        XCTAssertNil(gaussianCookMemoryCaption(fileBytes: 0, physicalMemory: 8 << 30))
+        XCTAssertEqual(gaussianCookFormatGiB(512 << 20), "512 MB")
+    }
+
+    func test_runtimeCaptionTellsPagedFromWholeLoads() {
+        // 10 M kept splats at degree 3: 16 + 45 bytes each, 582 MiB, above the Mac threshold.
+        let paged = gaussianCookRuntimeCaption(keptSplatCount: 10_000_000, shDegree: 3, residencyBudgetBytes: 1 << 30, pagePoolMaxBytes: 1 << 30, workingSetSplats: 6_000_000)
+        XCTAssertEqual(paged, "About 582 MB of packed splats at runtime: pages from disk (above 512 MB) through a 582 MB pool; the frame draws at most 6,000,000 splats.")
+        // The pool is capped by the residency budget (a quarter of the geometry budget).
+        let smallBudget = gaussianCookRuntimeCaption(keptSplatCount: 10_000_000, shDegree: 3, residencyBudgetBytes: 300 << 20, pagePoolMaxBytes: 1 << 30, workingSetSplats: 3_000_000)
+        XCTAssertTrue(smallBudget.contains("pages from disk (above 300 MB) through a 300 MB pool; the frame draws at most 3,000,000 splats."), smallBudget)
+        // 1 M splats without SH: 16 MiB, loads whole.
+        let whole = gaussianCookRuntimeCaption(keptSplatCount: 1_000_000, shDegree: 0, residencyBudgetBytes: 1 << 30, pagePoolMaxBytes: 1 << 30, workingSetSplats: 6_000_000)
+        XCTAssertEqual(whole, "About 15 MB of packed splats at runtime: loads whole (below 512 MB); the frame draws at most 6,000,000 splats.")
+    }
+
     // MARK: - Recenter
 
     func test_recenterTranslationFollowsTheMode() {
