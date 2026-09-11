@@ -553,17 +553,66 @@ func gaussianCookFormatBytes(_ bytes: Int) -> String {
 /// the other way round.
 func gaussianCookFailureDetail(_ error: Error) -> String {
     switch error {
+    case is GaussianCookCancelledError: "Cancelled before it started"
     case let cook as UntoldGSCookError: cook.description
     case let format as UntoldGSError: format.description
     default: error.localizedDescription
     }
 }
 
+/// The result of a tracked cook the user cancelled from the Tasks panel while it was still
+/// waiting for the cook queue. Nothing was written.
+struct GaussianCookCancelledError: Error, Equatable {}
+
+/// Wall time a cook of `splatCount` splats typically takes, in seconds: the engine's baker
+/// ran at about 42 µs per splat for a degree-3 capture on an M4 Max (10 M splats in 7 min),
+/// reading, cooking, ranking and writing the chunks and the coarse levels.
+func gaussianCookEstimatedSeconds(splatCount: Int) -> Double {
+    Double(splatCount) * 42e-6
+}
+
+/// Seconds as the task row shows them: "about 7 min" / "about 30 s"; nil below ten seconds,
+/// when the row is gone before it is read.
+func gaussianCookFormatEstimate(seconds: Double) -> String? {
+    guard seconds >= 10 else { return nil }
+    if seconds >= 90 {
+        return "about \(Int((seconds / 60).rounded())) min"
+    }
+    return "about \(Int((seconds / 10).rounded() * 10)) s"
+}
+
+/// Tasks panel detail while the bake runs. The engine's baker reports no progress and
+/// cannot be interrupted, so the row says how long a cook of this size typically takes and
+/// that the cancel button is gone for good reason.
+func gaussianCookRunningDetail(settings: GaussianCookSettings, sourceSplatCount: Int?) -> String {
+    var detail = "Cooking"
+    if let sourceSplatCount {
+        detail += " \(GaussianSplatBudget.formatted(sourceSplatCount)) splats"
+    }
+    detail += " \(gaussianCookTaskDetail(settings: settings))"
+    var notes: [String] = []
+    if let sourceSplatCount, let estimate = gaussianCookFormatEstimate(seconds: gaussianCookEstimatedSeconds(splatCount: sourceSplatCount)) {
+        notes.append("typically \(estimate)")
+    }
+    notes.append("cannot be interrupted")
+    return detail + " (" + notes.joined(separator: "; ") + ")"
+}
+
+/// Tasks panel detail while the bake waits for the serial cook queue (an import batch cooks
+/// its files one after the other); the row is cancellable until then.
+func gaussianCookQueuedDetail(settings: GaussianCookSettings) -> String {
+    "Waiting for the cook queue \(gaussianCookTaskDetail(settings: settings))"
+}
+
 /// Cooks `plyURL` as a job in the Tasks panel. The bake runs on `queue` (the shared
-/// serial cook queue by default) so the UI never blocks; the task is indeterminate
-/// and finishes with the kept/pruned summary or the error's description. The `.ply`
-/// is never modified, so a failed cook leaves it in place to re-cook from the
-/// context menu. `completion` runs on the main queue after the task is finished.
+/// serial cook queue by default) so the UI never blocks. The row can be cancelled while
+/// the cook waits its turn on the queue (a batch of imports); once the engine's baker has
+/// started it cannot be interrupted, so the cancel button goes and the row says how long a
+/// cook of this size typically takes. The task is indeterminate (the baker reports no
+/// progress) and finishes with the kept/pruned/levels summary or the error's description.
+/// The `.ply` is never modified, so a failed or cancelled cook leaves it in place to
+/// re-cook from the context menu. `completion` runs on the main queue after the task is
+/// finished; a cancelled cook completes with `GaussianCookCancelledError`.
 @discardableResult
 func cookGaussianPLYTracked(
     plyURL: URL,
@@ -574,9 +623,21 @@ func cookGaussianPLYTracked(
 ) -> EditorTaskHandle {
     let task = TaskCenter.begin(
         "Cooking \(plyURL.lastPathComponent)",
-        detail: gaussianCookTaskDetail(settings: settings)
+        detail: gaussianCookQueuedDetail(settings: settings),
+        // The hook itself does nothing: the queued block reads `isCancelRequested` when its
+        // turn comes and bows out. Its presence gives the row its cancel button.
+        onCancel: {}
     )
     queue.async {
+        if task.isCancelRequested {
+            task.markCancelled(gaussianCookFailureDetail(GaussianCookCancelledError()))
+            DispatchQueue.main.async { completion(.failure(GaussianCookCancelledError())) }
+            return
+        }
+        // From here the baker runs to the end: no cancel button.
+        task.setCancelHandler(nil)
+        let sourceSplatCount = try? PLYReader.readGaussianSplatCount(from: plyURL)
+        task.setDetail(gaussianCookRunningDetail(settings: settings, sourceSplatCount: sourceSplatCount))
         let result = Result { try cookGaussianPLY(plyURL: plyURL, settings: settings, outputDirectory: outputDirectory) }
         switch result {
         case let .success(bake):

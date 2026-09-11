@@ -405,6 +405,66 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertEqual(order, ["a.ply", "b.ply"])
     }
 
+    func test_trackedCookCanBeCancelledWhileQueued() async throws {
+        let plyURL = try makeTemporaryPLY(named: "queued.ply", splatCount: 20)
+        let queue = DispatchQueue(label: "GaussianCookSheetTests.blocked")
+        let gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() } // holds the queue as a running cook would
+
+        let finished = expectation(description: "completion on main")
+        var completionResult: Result<GaussianProgressiveBakeResult, Error>?
+        let handle = cookGaussianPLYTracked(plyURL: plyURL, settings: GaussianCookSettings(), queue: queue) { result in
+            completionResult = result
+            finished.fulfill()
+        }
+        await settleTaskCenter()
+        let queuedTask = await trackedTask(handle.id)
+        let queued = try XCTUnwrap(queuedTask)
+        XCTAssertEqual(queued.state, .running)
+        XCTAssertTrue(queued.isCancellable, "a cook waiting for the queue can be cancelled")
+        XCTAssertEqual(queued.detail, "Waiting for the cook queue → .untoldgs")
+
+        await MainActor.run { TaskCenter.shared.cancel(handle.id) }
+        gate.signal()
+        await fulfillment(of: [finished], timeout: 30)
+        await settleTaskCenter()
+
+        guard case let .failure(error)? = completionResult else {
+            return XCTFail("expected the cancelled cook to complete with an error")
+        }
+        XCTAssertTrue(error is GaussianCookCancelledError)
+        XCTAssertEqual(gaussianCookFailureDetail(error), "Cancelled before it started")
+        let cancelledTask = await trackedTask(handle.id)
+        let cancelled = try XCTUnwrap(cancelledTask)
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertEqual(cancelled.detail, "Cancelled before it started")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plyURL.deletingPathExtension().appendingPathExtension("untoldgs").path), "nothing was written")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: plyURL.path))
+    }
+
+    func test_runningDetailNamesTheSizeAndTheEstimate() {
+        var settings = GaussianCookSettings()
+        XCTAssertEqual(
+            gaussianCookRunningDetail(settings: settings, sourceSplatCount: 10_000_000),
+            "Cooking 10,000,000 splats → .untoldgs (typically about 7 min; cannot be interrupted)"
+        )
+        XCTAssertEqual(
+            gaussianCookRunningDetail(settings: settings, sourceSplatCount: 1_000_000),
+            "Cooking 1,000,000 splats → .untoldgs (typically about 40 s; cannot be interrupted)"
+        )
+        settings.levelCount = 2
+        XCTAssertEqual(
+            gaussianCookRunningDetail(settings: settings, sourceSplatCount: 200),
+            "Cooking 200 splats 2 progressive tiers → .untoldgs (cannot be interrupted)",
+            "a cook of seconds shows no estimate"
+        )
+        XCTAssertEqual(gaussianCookRunningDetail(settings: GaussianCookSettings(), sourceSplatCount: nil), "Cooking → .untoldgs (cannot be interrupted)")
+        XCTAssertEqual(gaussianCookEstimatedSeconds(splatCount: 10_000_000), 420, accuracy: 0.001)
+        XCTAssertNil(gaussianCookFormatEstimate(seconds: 9))
+        XCTAssertEqual(gaussianCookFormatEstimate(seconds: 44), "about 40 s")
+        XCTAssertEqual(gaussianCookFormatEstimate(seconds: 90), "about 2 min")
+    }
+
     // MARK: - Helpers
 
     /// `TaskCenter` applies every update on the main actor via `Task {}`; give those a
