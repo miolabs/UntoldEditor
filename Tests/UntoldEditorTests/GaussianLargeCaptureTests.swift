@@ -319,6 +319,17 @@ final class GaussianLargeCaptureTests: XCTestCase {
         await fulfillment(of: [loaded], timeout: 900)
         let loadSeconds = CACurrentMediaTime() - start
         XCTAssertTrue(succeeded, "the load reported success")
+        // The placement is a Tasks-panel job: it finishes with the engine path the file takes.
+        for _ in 0 ..< 5 {
+            await Task.yield()
+        }
+        let loadTask = TaskCenter.shared.tasks.last { $0.title == "Loading \(asset.lastPathComponent)" }
+        XCTAssertEqual(loadTask?.state, .succeeded, "the placement task succeeded")
+        if asset.pathExtension.lowercased() == "untoldgs" {
+            let expected = try GaussianRuntimeSummary.read(url: asset).placementDetail
+            XCTAssertEqual(loadTask?.detail, expected, "the task row carries the runtime summary")
+        }
+        note("placement task: \(loadTask?.detail ?? "none")")
         let component = try XCTUnwrap(scene.get(component: GaussianComponent.self, for: entity), "the entity carries a GaussianComponent")
         let metadata = try XCTUnwrap(EditorGaussianAssetState.shared.metadata(for: entity), "the editor tracks the placed asset")
         XCTAssertEqual(metadata.sourceURL, asset)

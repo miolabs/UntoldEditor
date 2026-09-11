@@ -774,8 +774,14 @@ func loadEditorGaussianAuto(
         )
     }
 
+    // A whole-resident load of a large file takes seconds with nothing on screen: the Tasks
+    // panel shows it, with what the engine is about to do with the file.
+    let task = TaskCenter.begin("Loading \(url.lastPathComponent)", detail: "Reading \(url.lastPathComponent)")
+
     switch plan {
     case let .progressive(baseFilename, levelCount, maxDistances):
+        // The engine has no asynchronous progressive loader: the tiers read on the main thread.
+        task.setDetail("\(levelCount) progressive tiers, resident")
         removeEntityGaussian(entityId: entityId)
         scene.remove(component: StreamingComponent.self, from: entityId)
         setEntityGaussian(
@@ -795,13 +801,23 @@ func loadEditorGaussianAuto(
             ),
             for: entityId
         )
+        task.succeed()
         completion?(true)
         return true
 
     case let .single(filename, withExtension):
         Task {
+            // The index read (header, chunk table, tree) is bounded; the payload comes through
+            // the engine's loader below, off the main thread.
+            let detail = await Task.detached { gaussianPlacementDetail(for: url) }.value
+            task.setDetail(detail)
             let success = await setEntityGaussianAsync(entityId: entityId, url: url)
             DispatchQueue.main.async {
+                if success {
+                    task.succeed(detail)
+                } else {
+                    task.fail("The engine declined \(url.lastPathComponent) (see Console)")
+                }
                 if success {
                     EditorGaussianAssetState.shared.setMetadata(
                         EditorGaussianAssetMetadata(
