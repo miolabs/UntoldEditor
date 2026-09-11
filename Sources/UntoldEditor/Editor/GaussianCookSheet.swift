@@ -194,24 +194,21 @@ func gaussianBudgetCaption(sourceCount: Int?, maxSplatCount: Int?) -> String {
     return "\(source) splats in the source; the budget keeps the \(GaussianSplatBudget.formatted(maxSplatCount)) most important."
 }
 
-/// What the sheet knows about a source `.ply` from its header and size alone: enough for the
+/// What the sheet knows about a source `.ply` from its header alone: enough for the
 /// captions, without reading the body.
 struct GaussianCookSourceInfo: Equatable {
     var splatCount: Int
     /// Spherical-harmonics degree the file stores (0 when it has no `f_rest_*` properties).
     var shDegree: Int
-    /// The file's bytes on disk.
-    var fileBytes: Int
 
     /// Header-only read: the splat count through the engine's reader and the degree from the
     /// `f_rest_N` property count of the first 100 KB (3 × ((d + 1)² − 1) coefficients).
-    static func read(from url: URL, fileManager fm: FileManager = .default) throws -> GaussianCookSourceInfo {
+    static func read(from url: URL) throws -> GaussianCookSourceInfo {
         let splatCount = try PLYReader.readGaussianSplatCount(from: url)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let prefix = try handle.read(upToCount: 100_000) ?? Data()
-        let bytes = (try? fm.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.intValue ?? 0
-        return GaussianCookSourceInfo(splatCount: splatCount, shDegree: shDegree(fromHeaderPrefix: prefix), fileBytes: bytes)
+        return GaussianCookSourceInfo(splatCount: splatCount, shDegree: shDegree(fromHeaderPrefix: prefix))
     }
 
     static func shDegree(fromHeaderPrefix prefix: Data) -> Int {
@@ -230,19 +227,27 @@ struct GaussianCookSourceInfo: Equatable {
     }
 }
 
-/// Process memory a cook of a `.ply` of `fileBytes` peaks at, in bytes: the reader holds the
-/// file and its decoded splat and SH arrays, the cook copies them and the writer packs the
-/// chunks and the coarse levels — about four times the file (a 2.25 GiB degree-3 capture of
-/// 10 M splats peaked at 9.9 GiB).
-func gaussianCookEstimatedPeakBytes(fileBytes: Int) -> Int {
-    fileBytes * 4
+/// Bytes per splat of the engine's compact cook store (`UntoldGSSplatStore`): the floats of
+/// position, scale, rotation, colour and opacity, 56 bytes, plus the spherical harmonics
+/// already quantised to the target degree.
+let gaussianCookStoreBytesPerSplat = 56
+
+/// Process memory a cook of `splatCount` splats at `shDegree` peaks at, in bytes. The engine
+/// streams the source in windows and cooks it into one compact store, so the store is what
+/// the cook holds — about 100 bytes per splat at degree 3 — plus the windows in flight, the
+/// ranking and the chunk encode, about half as much again: a 10 M-splat degree-3 capture
+/// (a 2.25 GiB `.ply`) peaks at about 1.4 GB. The budget compacts the store in place, so the
+/// source count is what counts, not the kept count.
+func gaussianCookEstimatedPeakBytes(splatCount: Int, shDegree: Int) -> Int {
+    let shBytes = shDegree > 0 ? UntoldGSFormat.shCoefficientCount(degree: UInt8(min(shDegree, Int(UntoldGSFormat.maxSHDegree)))) : 0
+    return splatCount * (gaussianCookStoreBytesPerSplat + shBytes) * 3 / 2
 }
 
 /// Caption under the source row: what the cook costs in memory, and a warning when the
 /// estimate does not fit the machine. Nil for an empty or unreadable source.
-func gaussianCookMemoryCaption(fileBytes: Int, physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> String? {
-    guard fileBytes > 0 else { return nil }
-    let peak = gaussianCookEstimatedPeakBytes(fileBytes: fileBytes)
+func gaussianCookMemoryCaption(splatCount: Int, shDegree: Int, physicalMemory: UInt64 = ProcessInfo.processInfo.physicalMemory) -> String? {
+    guard splatCount > 0 else { return nil }
+    let peak = gaussianCookEstimatedPeakBytes(splatCount: splatCount, shDegree: shDegree)
     let text = "The cook needs about \(gaussianCookFormatGiB(peak)) of memory (this Mac has \(gaussianCookFormatGiB(Int(physicalMemory))))"
     if Double(peak) > Double(physicalMemory) * 0.75 {
         return text + "; expect heavy swapping — close other apps or cook on a Mac with more memory."
@@ -1189,7 +1194,9 @@ struct GaussianCookSheet: View {
                                 keptSplatCount: min(sourceInfo.splatCount, settings.cookOptions.maxSplatCount ?? sourceInfo.splatCount),
                                 shDegree: settings.shDegree ?? sourceInfo.shDegree
                             ))
-                            if let memory = gaussianCookMemoryCaption(fileBytes: sourceInfo.fileBytes) {
+                            // The cook's own footprint: the compact store at the degree it
+                            // keeps, over every source splat.
+                            if let memory = gaussianCookMemoryCaption(splatCount: sourceInfo.splatCount, shDegree: min(settings.shDegree ?? sourceInfo.shDegree, sourceInfo.shDegree)) {
                                 Text(memory)
                             }
                         }

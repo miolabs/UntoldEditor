@@ -735,8 +735,6 @@ final class GaussianCookSheetTests: XCTestCase {
         let info = try GaussianCookSourceInfo.read(from: plyURL)
         XCTAssertEqual(info.splatCount, 200)
         XCTAssertEqual(info.shDegree, 0, "the fixture carries no f_rest_* block")
-        let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: plyURL.path)[.size] as? NSNumber)
-        XCTAssertEqual(info.fileBytes, size.intValue)
 
         func header(rest: Int) -> Data {
             var text = "ply\nformat binary_little_endian 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
@@ -752,18 +750,32 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertEqual(GaussianCookSourceInfo.shDegree(fromHeaderPrefix: header(rest: 45)), 3)
     }
 
-    func test_memoryCaptionEstimatesFourTimesTheFile() {
-        let file = 2250 << 20 // the 10 M-splat degree-3 capture: 2.25 GiB, peaked at 9.9 GiB
-        XCTAssertEqual(gaussianCookEstimatedPeakBytes(fileBytes: file), file * 4)
+    func test_memoryCaptionSizesTheCompactStore() {
+        // The 10 M-splat degree-3 capture: 56 + 45 bytes per splat in the store, half as much
+        // again in flight — about 1.4 GB, where the whole-file reader peaked at 9.9 GiB.
+        XCTAssertEqual(gaussianCookStoreBytesPerSplat, 56)
+        XCTAssertEqual(gaussianCookEstimatedPeakBytes(splatCount: 10_000_000, shDegree: 3), 10_000_000 * 101 * 3 / 2)
+        XCTAssertEqual(gaussianCookEstimatedPeakBytes(splatCount: 1_000_000, shDegree: 0), 1_000_000 * 56 * 3 / 2)
+        XCTAssertEqual(gaussianCookEstimatedPeakBytes(splatCount: 1000, shDegree: 1), 1000 * 65 * 3 / 2)
+        XCTAssertEqual(gaussianCookEstimatedPeakBytes(splatCount: 1000, shDegree: 7), 1000 * 101 * 3 / 2, "clamped to the format's top degree")
         XCTAssertEqual(
-            gaussianCookMemoryCaption(fileBytes: file, physicalMemory: 128 << 30),
-            "The cook needs about 8.8 GB of memory (this Mac has 128.0 GB)."
+            gaussianCookMemoryCaption(splatCount: 10_000_000, shDegree: 3, physicalMemory: 128 << 30),
+            "The cook needs about 1.4 GB of memory (this Mac has 128.0 GB)."
         )
         XCTAssertEqual(
-            gaussianCookMemoryCaption(fileBytes: file, physicalMemory: 8 << 30),
-            "The cook needs about 8.8 GB of memory (this Mac has 8.0 GB); expect heavy swapping — close other apps or cook on a Mac with more memory."
+            gaussianCookMemoryCaption(splatCount: 10_000_000, shDegree: 3, physicalMemory: 8 << 30),
+            "The cook needs about 1.4 GB of memory (this Mac has 8.0 GB).",
+            "an 8 GB Mac cooks the capture without swapping"
         )
-        XCTAssertNil(gaussianCookMemoryCaption(fileBytes: 0, physicalMemory: 8 << 30))
+        XCTAssertEqual(
+            gaussianCookMemoryCaption(splatCount: 10_000_000, shDegree: 3, physicalMemory: 1 << 30),
+            "The cook needs about 1.4 GB of memory (this Mac has 1.0 GB); expect heavy swapping — close other apps or cook on a Mac with more memory."
+        )
+        XCTAssertEqual(
+            gaussianCookMemoryCaption(splatCount: 1_000_000, shDegree: 0, physicalMemory: 8 << 30),
+            "The cook needs about 80 MB of memory (this Mac has 8.0 GB)."
+        )
+        XCTAssertNil(gaussianCookMemoryCaption(splatCount: 0, shDegree: 3, physicalMemory: 8 << 30))
         XCTAssertEqual(gaussianCookFormatGiB(512 << 20), "512 MB")
     }
 
