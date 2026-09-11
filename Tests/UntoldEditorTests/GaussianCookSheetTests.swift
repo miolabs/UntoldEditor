@@ -334,7 +334,8 @@ final class GaussianCookSheetTests: XCTestCase {
 
         let finished = expectation(description: "completion on main")
         var completionResult: Result<GaussianProgressiveBakeResult, Error>?
-        let handle = cookGaussianPLYTracked(plyURL: plyURL, settings: settings) { result in
+        let reports = GaussianCookReportLog()
+        let handle = cookGaussianPLYTracked(plyURL: plyURL, settings: settings, control: UntoldGSCookControl(progress: { reports.append($0) })) { result in
             XCTAssertTrue(Thread.isMainThread)
             completionResult = result
             finished.fulfill()
@@ -349,9 +350,24 @@ final class GaussianCookSheetTests: XCTestCase {
         let task = try XCTUnwrap(tracked)
         XCTAssertEqual(task.title, "Cooking chair.ply")
         XCTAssertEqual(task.state, .succeeded)
-        XCTAssertNil(task.progress, "the baker reports no progress; the row stays indeterminate")
+        XCTAssertEqual(task.progress, 1, "the engine's reports drive the row's bar to the end")
         XCTAssertFalse(task.isCancellable)
         XCTAssertEqual(task.detail, "Kept 200 of 200 splats")
+
+        // The engine reported every phase in order, once per tier past the cook, and its
+        // overall fraction never went back.
+        let progress = reports.entries
+        XCTAssertEqual(progress.first?.phase, .read)
+        XCTAssertEqual(progress.last?.phase, .write)
+        XCTAssertEqual(progress.last?.overall, 1)
+        XCTAssertEqual(progress.last?.tierIndex, 1)
+        XCTAssertEqual(Set(progress.map(\.tierCount)), [2])
+        XCTAssertTrue(progress.contains { $0.phase == .cook })
+        XCTAssertTrue(progress.contains { $0.phase == .chunk && $0.tierIndex == 0 })
+        XCTAssertTrue(progress.contains { $0.phase == .chunk && $0.tierIndex == 1 })
+        for (earlier, later) in zip(progress, progress.dropFirst()) {
+            XCTAssertLessThanOrEqual(earlier.overall, later.overall, "\(earlier) then \(later)")
+        }
     }
 
     func test_trackedCookFailureMarksTaskFailedAndKeepsTheSource() async throws {
@@ -432,7 +448,7 @@ final class GaussianCookSheetTests: XCTestCase {
         guard case let .failure(error)? = completionResult else {
             return XCTFail("expected the cancelled cook to complete with an error")
         }
-        XCTAssertTrue(error is GaussianCookCancelledError)
+        XCTAssertEqual(error as? GaussianCookCancelledError, GaussianCookCancelledError(stage: .queued))
         XCTAssertEqual(gaussianCookFailureDetail(error), "Cancelled before it started")
         let cancelledTask = await trackedTask(handle.id)
         let cancelled = try XCTUnwrap(cancelledTask)
@@ -442,30 +458,170 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: plyURL.path))
     }
 
-    func test_runningDetailNamesTheSizeAndTheEstimate() {
+    func test_runningCookCancelledFromTheTasksPanelLeavesNothingWritten() async throws {
+        // Two tiers: the cancel lands at the first report of the second, when the first tier
+        // is already complete in its temporary file — the engine must remove it.
+        let plyURL = try makeTemporaryPLY(named: "running.ply", splatCount: 200)
         var settings = GaussianCookSettings()
-        XCTAssertEqual(
-            gaussianCookRunningDetail(settings: settings, sourceSplatCount: 10_000_000),
-            "Cooking 10,000,000 splats → .untoldgs (typically about 7 min; cannot be interrupted)"
-        )
-        XCTAssertEqual(
-            gaussianCookRunningDetail(settings: settings, sourceSplatCount: 1_000_000),
-            "Cooking 1,000,000 splats → .untoldgs (typically about 40 s; cannot be interrupted)"
-        )
         settings.levelCount = 2
-        XCTAssertEqual(
-            gaussianCookRunningDetail(settings: settings, sourceSplatCount: 200),
-            "Cooking 200 splats 2 progressive tiers → .untoldgs (cannot be interrupted)",
-            "a cook of seconds shows no estimate"
+        let queue = DispatchQueue(label: "GaussianCookSheetTests.running")
+        let gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() } // the row is registered before the bake can start
+
+        let cancelRequests = GaussianCookReportLog()
+        let cancelOnSecondTier = UntoldGSCookControl(progress: { progress in
+            guard progress.tierIndex == 1, cancelRequests.entries.isEmpty else { return }
+            cancelRequests.append(progress)
+            // What the Tasks panel's cancel button does, from the cooking thread.
+            DispatchQueue.main.sync {
+                MainActor.assumeIsolated {
+                    for task in TaskCenter.shared.tasks where task.title == "Cooking running.ply" && task.isActive {
+                        TaskCenter.shared.cancel(task.id)
+                    }
+                }
+            }
+        })
+
+        let finished = expectation(description: "completion on main")
+        var completionResult: Result<GaussianProgressiveBakeResult, Error>?
+        let handle = cookGaussianPLYTracked(plyURL: plyURL, settings: settings, queue: queue, control: cancelOnSecondTier) { result in
+            completionResult = result
+            finished.fulfill()
+        }
+        await settleTaskCenter()
+        gate.signal()
+        await fulfillment(of: [finished], timeout: 30)
+        await settleTaskCenter()
+
+        XCTAssertEqual(cancelRequests.entries.count, 1, "the cancel was requested while the bake ran")
+        guard case let .failure(error)? = completionResult else {
+            return XCTFail("expected the cancelled cook to complete with an error")
+        }
+        XCTAssertEqual(error as? GaussianCookCancelledError, GaussianCookCancelledError(stage: .running))
+        XCTAssertEqual(gaussianCookFailureDetail(error), "Cancelled; nothing was written")
+        let taskID = handle.id
+        let cancelledTask = await MainActor.run { TaskCenter.shared.tasks.first { $0.id == taskID } }
+        let cancelled = try XCTUnwrap(cancelledTask)
+        XCTAssertEqual(cancelled.state, .cancelled)
+        XCTAssertEqual(cancelled.detail, "Cancelled; nothing was written")
+        XCTAssertLessThan(cancelled.progress ?? 1, 1, "the bar stopped short of the end")
+        // Neither a tier nor a staged temporary is left beside the source.
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: plyURL.deletingLastPathComponent().path), ["running.ply"])
+    }
+
+    func test_cancelledCookLeavesNoFileBehind() throws {
+        // The direct call with the engine's control: cancelled in the second tier's chunk phase
+        // — the first tier staged, nothing published — it throws the engine's error and the
+        // directory holds the source alone.
+        let plyURL = try makeTemporaryPLY(named: "direct.ply", splatCount: 200)
+        var settings = GaussianCookSettings()
+        settings.levelCount = 2
+        let seen = GaussianCookReportLog()
+        let control = UntoldGSCookControl(
+            progress: { seen.append($0) },
+            isCancelled: { seen.entries.contains { $0.tierIndex == 1 } }
         )
-        XCTAssertEqual(gaussianCookRunningDetail(settings: GaussianCookSettings(), sourceSplatCount: nil), "Cooking → .untoldgs (cannot be interrupted)")
-        XCTAssertEqual(gaussianCookEstimatedSeconds(splatCount: 10_000_000), 420, accuracy: 0.001)
-        XCTAssertNil(gaussianCookFormatEstimate(seconds: 9))
-        XCTAssertEqual(gaussianCookFormatEstimate(seconds: 44), "about 40 s")
-        XCTAssertEqual(gaussianCookFormatEstimate(seconds: 90), "about 2 min")
+        XCTAssertThrowsError(try cookGaussianPLY(plyURL: plyURL, settings: settings, control: control)) { error in
+            XCTAssertEqual(error as? UntoldGSCookError, .cancelled)
+        }
+        XCTAssertTrue(seen.entries.contains { $0.tierIndex == 1 && $0.phase == .chunk }, "the bake reached the second tier")
+        XCTAssertFalse(seen.entries.contains { $0.tierIndex == 1 && $0.phase == .write && $0.fraction == 1 }, "and stopped before writing it")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: plyURL.deletingLastPathComponent().path), ["direct.ply"])
+    }
+
+    func test_runningDetailNamesTheSizeAndTheSettings() {
+        var settings = GaussianCookSettings()
+        XCTAssertEqual(gaussianCookRunningDetail(settings: settings, sourceSplatCount: 10_000_000), "Cooking 10,000,000 splats → .untoldgs")
+        settings.levelCount = 2
+        settings.recenter = true
+        XCTAssertEqual(gaussianCookRunningDetail(settings: settings, sourceSplatCount: 200), "Cooking 200 splats 2 progressive tiers → .untoldgs, recentred")
+        XCTAssertEqual(gaussianCookRunningDetail(settings: GaussianCookSettings(), sourceSplatCount: nil), "Cooking → .untoldgs")
+        XCTAssertEqual(gaussianCookTaskDetailSuffix(settings: settings), "→ .untoldgs, recentred")
+        XCTAssertEqual(gaussianCookTaskDetail(settings: settings), "2 progressive tiers → .untoldgs, recentred")
+    }
+
+    func test_progressDetailNamesThePhaseAndTheTier() {
+        var settings = GaussianCookSettings()
+        func detail(_ phase: UntoldGSCookPhase, tier: Int = 0, of tierCount: Int = 1, splats: Int? = 10_000_000) -> String {
+            gaussianCookProgressDetail(
+                UntoldGSCookProgress(phase: phase, fraction: 0.5, overall: 0.5, tierIndex: tier, tierCount: tierCount),
+                settings: settings,
+                sourceSplatCount: splats
+            )
+        }
+        XCTAssertEqual(detail(.read), "Reading 10,000,000 splats → .untoldgs")
+        XCTAssertEqual(detail(.cook), "Cooking 10,000,000 splats → .untoldgs")
+        XCTAssertEqual(detail(.read, splats: nil), "Reading → .untoldgs", "a header the reader could not count")
+        XCTAssertEqual(detail(.chunk), "Chunking → .untoldgs", "a single tier is not numbered")
+        XCTAssertEqual(detail(.coarsen), "Coarsening → .untoldgs")
+        XCTAssertEqual(detail(.write), "Writing → .untoldgs")
+
+        settings.levelCount = 3
+        settings.coarseLevels = .two
+        XCTAssertEqual(detail(.read, of: 3), "Reading 10,000,000 splats → .untoldgs, 2 coarse levels", "the source phases name no tier")
+        XCTAssertEqual(detail(.chunk, tier: 0, of: 3), "Chunking tier 1 of 3 → .untoldgs, 2 coarse levels")
+        XCTAssertEqual(detail(.coarsen, tier: 1, of: 3), "Coarsening tier 2 of 3 → .untoldgs, 2 coarse levels")
+        XCTAssertEqual(detail(.write, tier: 2, of: 3), "Writing tier 3 of 3 → .untoldgs, 2 coarse levels")
+
+        settings = GaussianCookSettings()
+        settings.recenter = true
+        settings.splatBudget = .visionPro
+        XCTAssertEqual(detail(.write), "Writing → .untoldgs, recentred, budget \(GaussianSplatBudget.formatted(UntoldGSCookOptions.splatBudgetMobile))")
+    }
+
+    func test_progressReporterThrottlesAndKeepsTheFractionMonotonic() {
+        var clock: TimeInterval = 100
+        var delivered: [(fraction: Double, detail: String)] = []
+        let reporter = GaussianCookProgressReporter(
+            now: { clock },
+            detail: { "\($0.phase.rawValue) \($0.tierIndex)" },
+            deliver: { delivered.append(($0, $1)) }
+        )
+        func report(_ phase: UntoldGSCookPhase, _ fraction: Float, overall: Float, tier: Int = 0, at time: TimeInterval) -> Bool {
+            clock = time
+            return reporter.report(UntoldGSCookProgress(phase: phase, fraction: fraction, overall: overall, tierIndex: tier, tierCount: 2))
+        }
+
+        XCTAssertTrue(report(.read, 0, overall: 0, at: 100), "the first report goes through")
+        XCTAssertFalse(report(.read, 0.2, overall: 0.07, at: 100.03), "too soon after the last")
+        XCTAssertFalse(report(.read, 0.4, overall: 0.14, at: 100.09))
+        XCTAssertTrue(report(.read, 0.6, overall: 0.21, at: 100.125), "the interval has passed")
+        XCTAssertTrue(report(.read, 1, overall: 0.35, at: 100.13), "the end of a phase always does")
+        XCTAssertTrue(report(.cook, 0, overall: 0.35, at: 100.14), "so does a new phase")
+        XCTAssertFalse(report(.cook, 0.5, overall: 0.375, at: 100.15))
+        XCTAssertTrue(report(.cook, 1, overall: 0.4, at: 100.16))
+        XCTAssertTrue(report(.chunk, 0, overall: 0.4, at: 100.17))
+        XCTAssertTrue(report(.chunk, 0, overall: 0.7, tier: 1, at: 100.18), "and a new tier of the same phase")
+        XCTAssertFalse(report(.chunk, 0.1, overall: 0.6, tier: 1, at: 100.19))
+        XCTAssertTrue(report(.chunk, 0.2, overall: 0.65, tier: 1, at: 100.375), "a lower overall after the interval")
+        XCTAssertEqual(reporter.fraction, 0.7, accuracy: 1e-6, "is shown as the highest so far")
+        XCTAssertTrue(report(.write, 1, overall: 1, tier: 1, at: 100.38))
+
+        XCTAssertEqual(delivered.map(\.detail), ["read 0", "read 0", "read 0", "cook 0", "cook 0", "chunk 0", "chunk 1", "chunk 1", "write 1"])
+        for (earlier, later) in zip(delivered, delivered.dropFirst()) {
+            XCTAssertLessThanOrEqual(earlier.fraction, later.fraction)
+        }
+        XCTAssertEqual(delivered.last?.fraction, 1)
+        XCTAssertEqual(GaussianCookProgressReporter.minimumInterval, 0.1, "about ten redraws a second")
     }
 
     // MARK: - Helpers
+
+    /// The engine's reports as a cook makes them, from the cooking thread.
+    private final class GaussianCookReportLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _entries: [UntoldGSCookProgress] = []
+
+        var entries: [UntoldGSCookProgress] {
+            lock.lock(); defer { lock.unlock() }
+            return _entries
+        }
+
+        func append(_ progress: UntoldGSCookProgress) {
+            lock.lock(); defer { lock.unlock() }
+            _entries.append(progress)
+        }
+    }
 
     /// `TaskCenter` applies every update on the main actor via `Task {}`; give those a
     /// moment to land before reading the task back.

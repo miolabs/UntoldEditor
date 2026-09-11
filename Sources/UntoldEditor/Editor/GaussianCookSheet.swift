@@ -7,7 +7,9 @@
 //  size, up axis, scale, opacity floor) and the call that writes the tiers next
 //  to the source file. Runs in-process through the engine, no CLI needed.
 //  `cookGaussianPLYTracked` is the entry point the browser uses: it queues the bake
-//  off the main thread and reports it as a job in the Tasks panel.
+//  off the main thread and reports it as a job in the Tasks panel, with the engine's
+//  phase and fraction on the row and the cancel button wired to the engine's
+//  cancellation, so a running cook stops within a moment and leaves nothing behind.
 //
 
 import simd
@@ -333,10 +335,15 @@ func gaussianSourceBounds(plyURL: URL) throws -> (min: simd_float3, max: simd_fl
 /// Writes `<ply name>.untoldgs` (or `<ply name>_lodN.untoldgs` tiers) beside `plyURL`,
 /// or inside `outputDirectory` when the editor is organizing the asset as a folder package.
 /// A recentred cook reads the source bounds first and bakes the offset into the transform.
+/// `control` follows and stops the bake (`UntoldGSCookControl`): the engine reports its
+/// phase and fraction through it and polls its cancellation between windows and chunk
+/// batches; a cancelled bake throws `UntoldGSCookError.cancelled` with nothing written, its
+/// tiers staged in temporary files until the last one is complete.
 func cookGaussianPLY(
     plyURL: URL,
     settings: GaussianCookSettings,
-    outputDirectory: URL? = nil
+    outputDirectory: URL? = nil,
+    control: UntoldGSCookControl? = nil
 ) throws -> GaussianProgressiveBakeResult {
     if let outputDirectory {
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -345,12 +352,14 @@ func cookGaussianPLY(
         .appendingPathComponent(plyURL.deletingPathExtension().lastPathComponent)
         .appendingPathExtension("untoldgs")
         ?? plyURL.deletingPathExtension().appendingPathExtension("untoldgs")
+    try control?.checkCancelled()
     let bounds = settings.recenter ? try gaussianSourceBounds(plyURL: plyURL) : nil
     return try bakeGaussianSplatProgressiveTiers(
         plyURL: plyURL,
         outputBaseURL: outputBaseURL,
         levelCount: max(1, settings.levelCount),
-        cookOptions: settings.cookOptions(recenteringBounds: bounds)
+        cookOptions: settings.cookOptions(recenteringBounds: bounds),
+        control: control
     )
 }
 
@@ -487,10 +496,17 @@ func gaussianCookSourceCaption(sourceURLs: [URL], sourceSplatCount: Int?, maxSpl
     return gaussianBudgetCaption(sourceCount: sourceSplatCount, maxSplatCount: maxSplatCount)
 }
 
-/// Tasks panel detail while a cook runs. The baker reports no progress, so this is all
-/// the row shows next to its spinner.
+/// What a cook's task row says about its settings: the tiers, then `gaussianCookTaskDetailSuffix`.
 func gaussianCookTaskDetail(settings: GaussianCookSettings) -> String {
-    var detail = settings.levelCount > 1 ? "\(settings.levelCount) progressive tiers → .untoldgs" : "→ .untoldgs"
+    let tiers = settings.levelCount > 1 ? "\(settings.levelCount) progressive tiers " : ""
+    return tiers + gaussianCookTaskDetailSuffix(settings: settings)
+}
+
+/// The tail of a cook's task row — "→ .untoldgs" and the settings that depart from the
+/// defaults — shared by the queued, running and per-phase details, which each put their own
+/// words in front of it.
+func gaussianCookTaskDetailSuffix(settings: GaussianCookSettings) -> String {
+    var detail = "→ .untoldgs"
     if settings.recenter {
         detail += ", recentred"
     }
@@ -553,49 +569,39 @@ func gaussianCookFormatBytes(_ bytes: Int) -> String {
 /// the other way round.
 func gaussianCookFailureDetail(_ error: Error) -> String {
     switch error {
-    case is GaussianCookCancelledError: "Cancelled before it started"
+    case let cancelled as GaussianCookCancelledError:
+        switch cancelled.stage {
+        case .queued: "Cancelled before it started"
+        case .running: "Cancelled; nothing was written"
+        }
     case let cook as UntoldGSCookError: cook.description
     case let format as UntoldGSError: format.description
     default: error.localizedDescription
     }
 }
 
-/// The result of a tracked cook the user cancelled from the Tasks panel while it was still
-/// waiting for the cook queue. Nothing was written.
-struct GaussianCookCancelledError: Error, Equatable {}
-
-/// Wall time a cook of `splatCount` splats typically takes, in seconds: the engine's baker
-/// ran at about 42 µs per splat for a degree-3 capture on an M4 Max (10 M splats in 7 min),
-/// reading, cooking, ranking and writing the chunks and the coarse levels.
-func gaussianCookEstimatedSeconds(splatCount: Int) -> Double {
-    Double(splatCount) * 42e-6
-}
-
-/// Seconds as the task row shows them: "about 7 min" / "about 30 s"; nil below ten seconds,
-/// when the row is gone before it is read.
-func gaussianCookFormatEstimate(seconds: Double) -> String? {
-    guard seconds >= 10 else { return nil }
-    if seconds >= 90 {
-        return "about \(Int((seconds / 60).rounded())) min"
+/// The result of a tracked cook the user cancelled from the Tasks panel. Nothing was written
+/// at either stage: a queued cook never started, and a running one stops at the engine's
+/// next poll with its tiers still in temporary files, which it removes.
+struct GaussianCookCancelledError: Error, Equatable {
+    enum Stage: Equatable {
+        /// Still waiting for the serial cook queue (an import batch).
+        case queued
+        /// The engine's bake was under way (`UntoldGSCookError.cancelled`).
+        case running
     }
-    return "about \(Int((seconds / 10).rounded() * 10)) s"
+
+    var stage: Stage
 }
 
-/// Tasks panel detail while the bake runs. The engine's baker reports no progress and
-/// cannot be interrupted, so the row says how long a cook of this size typically takes and
-/// that the cancel button is gone for good reason.
+/// Tasks panel detail from the bake's start until the engine's first report: the size of
+/// the cook and its settings. A recentred cook measures the source bounds in this time.
 func gaussianCookRunningDetail(settings: GaussianCookSettings, sourceSplatCount: Int?) -> String {
     var detail = "Cooking"
     if let sourceSplatCount {
         detail += " \(GaussianSplatBudget.formatted(sourceSplatCount)) splats"
     }
-    detail += " \(gaussianCookTaskDetail(settings: settings))"
-    var notes: [String] = []
-    if let sourceSplatCount, let estimate = gaussianCookFormatEstimate(seconds: gaussianCookEstimatedSeconds(splatCount: sourceSplatCount)) {
-        notes.append("typically \(estimate)")
-    }
-    notes.append("cannot be interrupted")
-    return detail + " (" + notes.joined(separator: "; ") + ")"
+    return detail + " \(gaussianCookTaskDetail(settings: settings))"
 }
 
 /// Tasks panel detail while the bake waits for the serial cook queue (an import batch cooks
@@ -604,44 +610,145 @@ func gaussianCookQueuedDetail(settings: GaussianCookSettings) -> String {
     "Waiting for the cook queue \(gaussianCookTaskDetail(settings: settings))"
 }
 
+/// Tasks panel detail for one of the engine's reports: the phase in the user's words —
+/// reading and cooking name the source's splats, chunking, coarsening and writing name the
+/// tier of a progressive bake — in front of the settings tail. The fraction is the row's
+/// bar, so the text carries none.
+func gaussianCookProgressDetail(_ progress: UntoldGSCookProgress, settings: GaussianCookSettings, sourceSplatCount: Int?) -> String {
+    let splats = sourceSplatCount.map { " \(GaussianSplatBudget.formatted($0)) splats" } ?? ""
+    let tier = progress.tierCount > 1 ? " tier \(progress.tierIndex + 1) of \(progress.tierCount)" : ""
+    let phase = switch progress.phase {
+    case .read: "Reading\(splats)"
+    case .cook: "Cooking\(splats)"
+    case .chunk: "Chunking\(tier)"
+    case .coarsen: "Coarsening\(tier)"
+    case .write: "Writing\(tier)"
+    }
+    return "\(phase) \(gaussianCookTaskDetailSuffix(settings: settings))"
+}
+
+/// Feeds the engine's cook reports to a Tasks-panel row at the rate the row can use. The
+/// engine reports after every source window and chunk batch — thousands of times for a large
+/// capture — where the panel redraws a few times a second: a change of phase or tier goes
+/// through at once, so does the end of a phase (fraction 1), and the reports between them at
+/// most every `minimumInterval`. The fraction shown never goes back: the engine's `overall`
+/// is monotonic by construction, and the row keeps the highest value it was given regardless.
+final class GaussianCookProgressReporter: @unchecked Sendable {
+    /// About 10 Hz: as often as a progress bar is worth redrawing.
+    static let minimumInterval: TimeInterval = 0.1
+
+    private let lock = NSLock()
+    private let now: () -> TimeInterval
+    private let detail: (UntoldGSCookProgress) -> String
+    private let deliver: (_ fraction: Double, _ detail: String) -> Void
+    private var lastPhase: UntoldGSCookPhase?
+    private var lastTierIndex = -1
+    private var lastDeliveredAt: TimeInterval = -.infinity
+    private var lastFraction: Double = 0
+
+    /// - Parameters:
+    ///   - now: The clock, in seconds; tests pass their own.
+    ///   - detail: The row's text for a report (`gaussianCookProgressDetail`).
+    ///   - deliver: Receives the fraction and the text of every report let through, on the
+    ///     cooking thread.
+    init(
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        detail: @escaping (UntoldGSCookProgress) -> String,
+        deliver: @escaping (_ fraction: Double, _ detail: String) -> Void
+    ) {
+        self.now = now
+        self.detail = detail
+        self.deliver = deliver
+    }
+
+    /// The fraction last delivered.
+    var fraction: Double {
+        lock.lock(); defer { lock.unlock() }
+        return lastFraction
+    }
+
+    /// Passes `progress` on when the row should see it; returns whether it did.
+    @discardableResult
+    func report(_ progress: UntoldGSCookProgress) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        let time = now()
+        let phaseChanged = progress.phase != lastPhase || progress.tierIndex != lastTierIndex
+        guard phaseChanged || progress.fraction >= 1 || time - lastDeliveredAt >= Self.minimumInterval else {
+            return false
+        }
+        lastPhase = progress.phase
+        lastTierIndex = progress.tierIndex
+        lastDeliveredAt = time
+        lastFraction = max(lastFraction, Double(progress.overall))
+        deliver(lastFraction, detail(progress))
+        return true
+    }
+}
+
 /// Cooks `plyURL` as a job in the Tasks panel. The bake runs on `queue` (the shared
 /// serial cook queue by default) so the UI never blocks. The row can be cancelled while
-/// the cook waits its turn on the queue (a batch of imports); once the engine's baker has
-/// started it cannot be interrupted, so the cancel button goes and the row says how long a
-/// cook of this size typically takes. The task is indeterminate (the baker reports no
-/// progress) and finishes with the kept/pruned/levels summary or the error's description.
-/// The `.ply` is never modified, so a failed or cancelled cook leaves it in place to
-/// re-cook from the context menu. `completion` runs on the main queue after the task is
-/// finished; a cancelled cook completes with `GaussianCookCancelledError`.
+/// the cook waits its turn on the queue (a batch of imports) and while the engine bakes:
+/// the engine polls the request between source windows and chunk batches, stops within a
+/// moment and removes the tiers it had staged, so nothing is written. The row's bar follows
+/// the engine's reports (`GaussianCookProgressReporter`), its text names the phase, and it
+/// finishes with the kept/pruned/levels summary or the error's description. The `.ply` is
+/// never modified, so a failed or cancelled cook leaves it in place to re-cook from the
+/// context menu. `completion` runs on the main queue after the task is finished; a cancelled
+/// cook completes with `GaussianCookCancelledError` at either stage. A caller's own
+/// `control` — a test's, a script's — sees every report unthrottled and can stop the cook too.
 @discardableResult
 func cookGaussianPLYTracked(
     plyURL: URL,
     settings: GaussianCookSettings,
     outputDirectory: URL? = nil,
     queue: DispatchQueue = gaussianCookQueue,
+    control: UntoldGSCookControl? = nil,
     completion: @escaping (Result<GaussianProgressiveBakeResult, Error>) -> Void
 ) -> EditorTaskHandle {
     let task = TaskCenter.begin(
         "Cooking \(plyURL.lastPathComponent)",
         detail: gaussianCookQueuedDetail(settings: settings),
         // The hook itself does nothing: the queued block reads `isCancelRequested` when its
-        // turn comes and bows out. Its presence gives the row its cancel button.
+        // turn comes, and the engine polls it while the bake runs. Its presence gives the
+        // row its cancel button.
         onCancel: {}
     )
     queue.async {
         if task.isCancelRequested {
-            task.markCancelled(gaussianCookFailureDetail(GaussianCookCancelledError()))
-            DispatchQueue.main.async { completion(.failure(GaussianCookCancelledError())) }
+            let cancelled = GaussianCookCancelledError(stage: .queued)
+            task.markCancelled(gaussianCookFailureDetail(cancelled))
+            DispatchQueue.main.async { completion(.failure(cancelled)) }
             return
         }
-        // From here the baker runs to the end: no cancel button.
-        task.setCancelHandler(nil)
         let sourceSplatCount = try? PLYReader.readGaussianSplatCount(from: plyURL)
         task.setDetail(gaussianCookRunningDetail(settings: settings, sourceSplatCount: sourceSplatCount))
-        let result = Result { try cookGaussianPLY(plyURL: plyURL, settings: settings, outputDirectory: outputDirectory) }
+        task.setProgress(0)
+        let reporter = GaussianCookProgressReporter(
+            detail: { gaussianCookProgressDetail($0, settings: settings, sourceSplatCount: sourceSplatCount) },
+            deliver: { fraction, detail in
+                // The row says "Cancelling…" from the request until the engine stops; a
+                // report in between must not overwrite it.
+                guard !task.isCancelRequested else { return }
+                task.setProgress(fraction)
+                task.setDetail(detail)
+            }
+        )
+        let panelControl = UntoldGSCookControl(
+            progress: { progress in
+                control?.progress?(progress)
+                reporter.report(progress)
+            },
+            isCancelled: { task.isCancelRequested || control?.isCancelled?() == true }
+        )
+        let result = Result { try cookGaussianPLY(plyURL: plyURL, settings: settings, outputDirectory: outputDirectory, control: panelControl) }
+            .mapError { error -> Error in
+                (error as? UntoldGSCookError) == .cancelled ? GaussianCookCancelledError(stage: .running) : error
+            }
         switch result {
         case let .success(bake):
             task.succeed(gaussianCookSummary(bake))
+        case let .failure(error) where error is GaussianCookCancelledError:
+            task.markCancelled(gaussianCookFailureDetail(error))
         case let .failure(error):
             task.fail(gaussianCookFailureDetail(error))
         }
