@@ -434,6 +434,84 @@ final class GaussianCookSheetTests: XCTestCase {
         return plyURL
     }
 
+    // MARK: - Coarse levels
+
+    func test_coarseLevelsMapToTheEnginePolicy() {
+        var settings = GaussianCookSettings()
+        XCTAssertEqual(settings.coarseLevels, .automatic, "the engine's default: levels for large captures only")
+        XCTAssertEqual(settings.cookOptions.coarseLevels, .automatic)
+        XCTAssertFalse(gaussianCookTaskDetail(settings: settings).contains("coarse"), "the default is not named in the task row")
+
+        settings.coarseLevels = .off
+        XCTAssertEqual(settings.cookOptions.coarseLevels, .off)
+        XCTAssertTrue(gaussianCookTaskDetail(settings: settings).hasSuffix(", no coarse levels"))
+
+        settings.coarseLevels = .one
+        XCTAssertEqual(settings.cookOptions.coarseLevels, .levels(count: 1))
+        XCTAssertTrue(gaussianCookTaskDetail(settings: settings).hasSuffix(", 1 coarse level"))
+
+        settings.coarseLevels = .two
+        XCTAssertEqual(settings.cookOptions.coarseLevels, .levels(count: 2))
+        XCTAssertTrue(gaussianCookTaskDetail(settings: settings).hasSuffix(", 2 coarse levels"))
+
+        XCTAssertEqual(GaussianCoarseLevelChoice.allCases.map(\.label), ["Auto", "Off", "1", "2"])
+        XCTAssertTrue(GaussianCoarseLevelChoice.summary.contains("\(UntoldGSFormat.coarseLevelsAutomaticMinimumChunks) chunks"))
+    }
+
+    func test_cookSummaryReportsTheCoarseLevelsBaked() {
+        let report = UntoldGSCookReport(inputSplatCount: 200, keptSplatCount: 200, prunedByOpacity: 0, prunedByDegenerateGeometry: 0, prunedByCrop: 0, shDegree: 0)
+        XCTAssertEqual(gaussianCookSummary(report), "Kept 200 of 200 splats", "without tier reports the summary is unchanged")
+        XCTAssertEqual(gaussianCookSummary(report, coarse: [nil]), "Kept 200 of 200 splats", "a bake without a section keeps the short row")
+
+        let coarse = UntoldGSCoarseLevelReport(levelCount: 2, ratioLog2: [3, 6], recordsPerLevel: [1_249_000, 156_000], bytes: 22_500_000, chunksWithoutLevels: 0)
+        XCTAssertEqual(gaussianCookSummary(report, coarse: [coarse]), "Kept 200 of 200 splats; 2 coarse levels (21.46 MiB)")
+        XCTAssertEqual(
+            gaussianCookSummary(report, coarse: [coarse, nil]),
+            "Kept 200 of 200 splats; 2 coarse levels on 1 of 2 tiers (21.46 MiB)",
+            "a progressive bake resolves the policy per tier"
+        )
+        var single = coarse
+        single.levelCount = 1
+        single.bytes = 4096
+        XCTAssertEqual(gaussianCookSummary(report, coarse: [single]), "Kept 200 of 200 splats; 1 coarse level (4.00 KiB)")
+
+        XCTAssertEqual(gaussianCookFormatBytes(512), "512 B")
+        XCTAssertEqual(gaussianCookFormatBytes(1536), "1.50 KiB")
+    }
+
+    func test_forcedCoarseLevelsBakeOnASmallCapture() async throws {
+        // One chunk of 200 splats is far below Auto's 64-chunk threshold, so Auto and Off bake
+        // no section and only a forced choice does: level 1 holds 200 >> 3 = 25 merged records.
+        let plyURL = try makeTemporaryPLY(named: "chair.ply", splatCount: 200)
+        var settings = GaussianCookSettings()
+        XCTAssertNil(try cookGaussianPLY(plyURL: plyURL, settings: settings).tiers[0].coarseReport, "Auto: below the threshold")
+        settings.coarseLevels = .off
+        XCTAssertNil(try cookGaussianPLY(plyURL: plyURL, settings: settings).tiers[0].coarseReport)
+
+        settings.coarseLevels = .one
+        let finished = expectation(description: "completion on main")
+        var completionResult: Result<GaussianProgressiveBakeResult, Error>?
+        let handle = cookGaussianPLYTracked(plyURL: plyURL, settings: settings) { result in
+            completionResult = result
+            finished.fulfill()
+        }
+        await fulfillment(of: [finished], timeout: 30)
+        await settleTaskCenter()
+
+        let bake = try XCTUnwrap(completionResult?.get())
+        let coarse = try XCTUnwrap(bake.tiers[0].coarseReport, "a forced level is baked whatever the size")
+        XCTAssertEqual(coarse.levelCount, 1)
+        XCTAssertEqual(coarse.recordsPerLevel, [25])
+        XCTAssertEqual(coarse.chunksWithoutLevels, 0)
+        XCTAssertGreaterThan(coarse.bytes, 0)
+
+        let tracked = await trackedTask(handle.id)
+        let task = try XCTUnwrap(tracked)
+        XCTAssertEqual(task.state, .succeeded)
+        XCTAssertEqual(task.detail, "Kept 200 of 200 splats; 1 coarse level (\(gaussianCookFormatBytes(coarse.bytes)))")
+        XCTAssertEqual(gaussianCookTaskDetail(settings: settings), "→ .untoldgs, 1 coarse level")
+    }
+
     // MARK: - Recenter
 
     func test_recenterTranslationFollowsTheMode() {

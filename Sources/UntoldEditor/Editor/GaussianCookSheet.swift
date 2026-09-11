@@ -41,6 +41,10 @@ struct GaussianCookSettings: Equatable {
     /// training run left it. The cook reads the source bounds first to compute it.
     var recenter: Bool = false
     var recenterMode: GaussianRecenterMode = .baseOnGround
+    /// Per-chunk coarse levels (`UntoldGSCookOptions.coarseLevels`): merged splats a far or
+    /// not-yet-paged chunk draws instead of its fine records. Auto bakes two levels for assets
+    /// of at least `UntoldGSFormat.coarseLevelsAutomaticMinimumChunks` chunks.
+    var coarseLevels: GaussianCoarseLevelChoice = .automatic
 
     /// Options without recentering: the up-axis rotation and scale only.
     var cookOptions: UntoldGSCookOptions {
@@ -56,6 +60,7 @@ struct GaussianCookSettings: Equatable {
         options.shDegree = shDegree.map { UInt8($0) }
         options.minimumOpacity = minimumOpacity
         options.maxSplatCount = splatBudget == .custom ? max(1, customSplatBudget) : splatBudget.maxSplatCount
+        options.coarseLevels = coarseLevels.policy
         var transform = UntoldGSCookOptions.transform(upAxis: upAxis, scale: scale)
         if recenter, let bounds {
             let translation = gaussianRecenterTranslation(
@@ -90,6 +95,44 @@ enum GaussianRecenterMode: String, CaseIterable, Identifiable {
         case .centreAtOrigin: "Centre at the origin"
         }
     }
+}
+
+/// The cook sheet's "Coarse levels" choices, mapped to `UntoldGSCoarseLevelPolicy`.
+enum GaussianCoarseLevelChoice: String, CaseIterable, Identifiable {
+    /// Two levels for assets of at least `UntoldGSFormat.coarseLevelsAutomaticMinimumChunks`
+    /// chunks, none for smaller ones: the engine's default.
+    case automatic
+    /// No coarse section, whatever the size.
+    case off
+    /// One level (1/8 of the fine splats per chunk), whatever the size.
+    case one
+    /// Two levels (1/8 and 1/64), whatever the size.
+    case two
+
+    var id: String {
+        rawValue
+    }
+
+    var label: String {
+        switch self {
+        case .automatic: "Auto"
+        case .off: "Off"
+        case .one: "1"
+        case .two: "2"
+        }
+    }
+
+    var policy: UntoldGSCoarseLevelPolicy {
+        switch self {
+        case .automatic: .automatic
+        case .off: .off
+        case .one: .levels(count: 1)
+        case .two: .levels(count: 2)
+        }
+    }
+
+    /// The tooltip of the row: what the levels are for and what Auto does.
+    static let summary = "Far chunks draw merged splats instead of their fine records, and a paged chunk draws them until its pages arrive. Auto bakes two levels for captures of at least \(UntoldGSFormat.coarseLevelsAutomaticMinimumChunks) chunks."
 }
 
 /// Splat budget presets: the per-entity caps the engine runtime enforces per platform
@@ -368,16 +411,51 @@ func gaussianCookTaskDetail(settings: GaussianCookSettings) -> String {
     } else if settings.splatBudget == .unlimited {
         detail += ", no budget"
     }
+    // Auto is the default; only a forced choice is named.
+    switch settings.coarseLevels {
+    case .automatic: break
+    case .off: detail += ", no coarse levels"
+    case .one: detail += ", 1 coarse level"
+    case .two: detail += ", 2 coarse levels"
+    }
     return detail
 }
 
-/// Tasks panel detail once a cook succeeded.
-func gaussianCookSummary(_ report: UntoldGSCookReport) -> String {
+/// Tasks panel detail once a cook succeeded: what the cook kept, and the coarse levels the
+/// tiers carry (`GaussianLODTier.coarseReport`; the tiers of a progressive bake each resolve
+/// the policy on their own, so the levels are counted per tier that got some). A bake
+/// without a section keeps the short row.
+func gaussianCookSummary(_ report: UntoldGSCookReport, coarse: [UntoldGSCoarseLevelReport?] = []) -> String {
     var summary = "Kept \(report.keptSplatCount) of \(report.inputSplatCount) splats"
     if report.prunedByBudget > 0 {
         summary += " (\(report.prunedByBudget) over the budget dropped)"
     }
+    let levelled = coarse.compactMap { $0 }
+    if let first = levelled.first {
+        let bytes = levelled.reduce(0) { $0 + $1.bytes }
+        let levels = "\(first.levelCount) coarse level\(first.levelCount == 1 ? "" : "s")"
+        let tiers = coarse.count > 1 ? " on \(levelled.count) of \(coarse.count) tiers" : ""
+        summary += "; \(levels)\(tiers) (\(gaussianCookFormatBytes(bytes)))"
+    }
     return summary
+}
+
+/// The summary of a whole bake: the cook report plus every tier's coarse section.
+func gaussianCookSummary(_ bake: GaussianProgressiveBakeResult) -> String {
+    gaussianCookSummary(bake.cookReport, coarse: bake.tiers.map(\.coarseReport))
+}
+
+/// Bytes as the engine's profile lines print them: MiB above a mebibyte, KiB above a
+/// kibibyte, bytes below.
+func gaussianCookFormatBytes(_ bytes: Int) -> String {
+    let value = Double(bytes)
+    if bytes >= 1024 * 1024 {
+        return String(format: "%.2f MiB", value / 1_048_576)
+    }
+    if bytes >= 1024 {
+        return String(format: "%.2f KiB", value / 1024)
+    }
+    return "\(bytes) B"
 }
 
 /// Tasks panel detail for a failed cook. The engine's own errors carry a readable
@@ -412,7 +490,7 @@ func cookGaussianPLYTracked(
         let result = Result { try cookGaussianPLY(plyURL: plyURL, settings: settings, outputDirectory: outputDirectory) }
         switch result {
         case let .success(bake):
-            task.succeed(gaussianCookSummary(bake.cookReport))
+            task.succeed(gaussianCookSummary(bake))
         case let .failure(error):
             task.fail(gaussianCookFailureDetail(error))
         }
@@ -780,6 +858,18 @@ struct GaussianCookSheet: View {
                         Text("4096 (environment)").tag(4096)
                     }
                     .labelsHidden()
+                }
+                GridRow {
+                    Text("Coarse levels")
+                    Picker("", selection: $settings.coarseLevels) {
+                        ForEach(GaussianCoarseLevelChoice.allCases) { choice in
+                            Text(choice.label).tag(choice)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 200)
+                    .help(GaussianCoarseLevelChoice.summary)
                 }
                 GridRow {
                     Text("Up axis")
