@@ -8,7 +8,7 @@
 //
 
 @testable import UntoldEditor
-import UntoldEngine
+@testable import UntoldEngine
 import XCTest
 
 @MainActor
@@ -106,6 +106,20 @@ final class GaussianRuntimeSummaryTests: XCTestCase {
         let whole = GaussianRuntimeSummary(header: header, allocatedBytes: 0, disablePaging: true, residencyBudgetBytes: 1 << 30, pagePoolMaxBytes: 1 << 30, workingSetSplats: 3_000_000)
         XCTAssertFalse(whole.isPaged)
         XCTAssertEqual(whole.poolBytes, whole.packedBytes)
+    }
+
+    func test_liveLineReadsTheEntityAndTheSceneWidePools() {
+        let savedScene = scene
+        defer { scene = savedScene }
+        scene = Scene()
+        let entity = createEntity()
+        XCTAssertNil(gaussianRuntimeLiveLine(entityId: entity, allocatedBytes: 0, coarseBytes: 0), "no splats, no line")
+
+        let component = try? XCTUnwrap(scene.assign(to: entity, component: GaussianComponent.self))
+        component?.estimatedGPUBytes = 610 << 20
+        XCTAssertEqual(gaussianRuntimeLiveLine(entityId: entity, allocatedBytes: 0, coarseBytes: 0), "GPU 610.00 MiB")
+        XCTAssertEqual(gaussianRuntimeLiveLine(entityId: entity, allocatedBytes: 582 << 20, coarseBytes: 0), "GPU 610.00 MiB · scene pools 582.00 MiB")
+        XCTAssertEqual(gaussianRuntimeLiveLine(entityId: entity, allocatedBytes: 582 << 20, coarseBytes: 22 << 20), "GPU 610.00 MiB · scene pools 582.00 MiB, coarse 22.00 MiB")
     }
 
     func test_placementLinesSteerAwayFromTheUncookedPLY() {

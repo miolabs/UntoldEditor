@@ -151,3 +151,23 @@ func gaussianPlacementStatusMessage(url: URL, entityName: String, accepted: Bool
     }
     return "Queued Gaussian import: \(entityName) (see Tasks)"
 }
+
+/// The live line under the Inspector's runtime rows, from what the engine exposes: the
+/// entity's GPU bytes (`GaussianComponent.estimatedGPUBytes`: the pool of a paged entity, the
+/// whole records otherwise) and the scene-wide pool and coarse bytes the residency budget is
+/// charged with (`GaussianPagePoolRegistry`). Nil for an entity without splats.
+func gaussianRuntimeLiveLine(
+    entityId: EntityID,
+    allocatedBytes: Int = GaussianPagePoolRegistry.shared.allocatedBytes,
+    coarseBytes: Int = GaussianPagePoolRegistry.shared.coarseBytes
+) -> String? {
+    guard let component = scene.get(component: GaussianComponent.self, for: entityId) else { return nil }
+    var line = "GPU \(gaussianCookFormatBytes(component.estimatedGPUBytes))"
+    if allocatedBytes > 0 || coarseBytes > 0 {
+        line += " · scene pools \(gaussianCookFormatBytes(allocatedBytes))"
+        if coarseBytes > 0 {
+            line += ", coarse \(gaussianCookFormatBytes(coarseBytes))"
+        }
+    }
+    return line
+}
