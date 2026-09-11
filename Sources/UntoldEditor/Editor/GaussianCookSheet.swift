@@ -315,21 +315,16 @@ func gaussianRecenterTranslation(
     }
 }
 
-/// Bounds of the splat centres in a source `.ply`, in capture space. Reads the whole
-/// file, so a recentred cook parses the source twice (once here, once in the baker).
+/// Bounds of the splat centres in a source `.ply`, in capture space: one streamed pass over
+/// the positions (`PLYReader.readGaussianCenterBounds`) with nothing resident but the running
+/// box, so a recentred cook of a multi-gigabyte capture costs a second read of the file and
+/// no memory. The bake's own `centerBounds` cannot serve: they are of the cooked splats, and
+/// the recenter translation has to be in the transform before the cook.
 func gaussianSourceBounds(plyURL: URL) throws -> (min: simd_float3, max: simd_float3) {
-    let splats = try PLYReader.readGaussianSplats(from: plyURL)
-    guard let first = splats.first else {
+    guard let bounds = try PLYReader.readGaussianCenterBounds(from: plyURL) else {
         throw UntoldGSError.sizeMismatch("source .ply contains no splats")
     }
-    var boundsMin = simd_float3(first.center.x, first.center.y, first.center.z)
-    var boundsMax = boundsMin
-    for splat in splats.dropFirst() {
-        let centre = simd_float3(splat.center.x, splat.center.y, splat.center.z)
-        boundsMin = simd_min(boundsMin, centre)
-        boundsMax = simd_max(boundsMax, centre)
-    }
-    return (boundsMin, boundsMax)
+    return bounds
 }
 
 /// Writes `<ply name>.untoldgs` (or `<ply name>_lodN.untoldgs` tiers) beside `plyURL`,

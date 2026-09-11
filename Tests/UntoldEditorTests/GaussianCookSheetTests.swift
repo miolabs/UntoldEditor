@@ -846,6 +846,17 @@ final class GaussianCookSheetTests: XCTestCase {
         XCTAssertEqual(bounds.max.x, 0.9, accuracy: 1e-6)
         XCTAssertEqual(bounds.max.y, 0.9, accuracy: 1e-6)
         XCTAssertEqual(bounds.max.z, 0.1, accuracy: 1e-6)
+
+        // The same box the engine's streamed pass reports, and its cull: a source with no
+        // splat left is refused the way the bake refuses it.
+        let streamed = try XCTUnwrap(PLYReader.readGaussianCenterBounds(from: plyURL))
+        XCTAssertEqual(streamed.min, bounds.min)
+        XCTAssertEqual(streamed.max, bounds.max)
+        let emptyURL = directory.appendingPathComponent("empty.ply")
+        try makeTestPLY(splatCount: 0).write(to: emptyURL)
+        XCTAssertThrowsError(try gaussianSourceBounds(plyURL: emptyURL)) { error in
+            XCTAssertEqual((error as? UntoldGSError)?.description, UntoldGSError.sizeMismatch("source .ply contains no splats").description)
+        }
     }
 
     func test_recentredCookWritesCentredSplats() throws {
