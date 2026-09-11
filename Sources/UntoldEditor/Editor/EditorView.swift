@@ -146,6 +146,8 @@ public struct EditorView: View {
         registerEditorRenderExtension()
         // Splat twin swaps preview in the viewport (View > Preview Splat Twins, on by default).
         GaussianTwinPreviewSettings.shared.activate()
+        // The working set the frame draws from (View > Splat Debug > Working Set).
+        EditorGaussianRuntimeSettings.shared.activate()
 
         if let r = renderer, let v = renderer?.metalView {
             r.setupCallbacks(gameUpdate: { _ in }, handleInput: r.handleSceneInput)

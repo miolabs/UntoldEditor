@@ -44,6 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var rightPanelItem: NSMenuItem?
     private var navigationStyleItems: [CameraNavigationStyle: NSMenuItem] = [:]
     private var splatDebugItems: [SplatDebugOption: NSMenuItem] = [:]
+    private var splatWorkingSetItems: [EditorSplatWorkingSet: NSMenuItem] = [:]
     private var previewSplatTwinsItem: NSMenuItem?
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -178,6 +179,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.toolTip = option.summary
             splatDebugItems[option] = item
         }
+        splatDebugMenu.addItem(.separator())
+
+        // The working set the frame draws from (radio-style checkmarks, synced in
+        // menuNeedsUpdate): the editor's frame-time budget for a large capture.
+        let workingSetItem = NSMenuItem(title: "Working Set", action: nil, keyEquivalent: "")
+        let workingSetMenu = NSMenu(title: "Working Set")
+        workingSetMenu.autoenablesItems = false
+        for choice in EditorSplatWorkingSet.allCases {
+            let item = addItem(to: workingSetMenu, title: choice.title, action: #selector(menuSelectSplatWorkingSet(_:)), key: "")
+            item.representedObject = choice.rawValue
+            item.toolTip = choice.summary
+            splatWorkingSetItems[choice] = item
+        }
+        workingSetItem.submenu = workingSetMenu
+        splatDebugMenu.addItem(workingSetItem)
         splatDebugItem.submenu = splatDebugMenu
         viewMenu.addItem(splatDebugItem)
 
@@ -201,6 +217,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_: NSMenu) {
         for (option, item) in splatDebugItems {
             item.state = option.isEnabled ? .on : .off
+        }
+        let workingSet = EditorGaussianRuntimeSettings.shared.workingSet
+        for (choice, item) in splatWorkingSetItems {
+            item.state = choice == workingSet ? .on : .off
         }
         previewSplatTwinsItem?.state = GaussianTwinPreviewSettings.shared.isEnabled ? .on : .off
         let store = EditorEngineStatsStore.shared
@@ -286,6 +306,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         EditorNavigationSettings.shared.style = style
+    }
+
+    @objc private func menuSelectSplatWorkingSet(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let choice = EditorSplatWorkingSet(rawValue: raw) else {
+            return
+        }
+        EditorGaussianRuntimeSettings.shared.workingSet = choice
     }
 
     @objc private func menuToggleSplatDebug(_ sender: NSMenuItem) {

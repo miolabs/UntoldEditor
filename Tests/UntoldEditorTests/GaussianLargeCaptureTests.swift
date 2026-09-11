@@ -41,6 +41,8 @@ final class GaussianLargeCaptureTests: XCTestCase {
     private var twinDefaults: UserDefaults!
     private var twinSuiteName = ""
     private var twinPreview: GaussianTwinPreviewSettings?
+    private var runtimeSettings: EditorGaussianRuntimeSettings?
+    private var savedWorkingSetOverride: Int?
 
     private var savedFov: Float = 0
     private var savedNear: Float = 0
@@ -101,6 +103,12 @@ final class GaussianLargeCaptureTests: XCTestCase {
         twinSuiteName = "GaussianLargeCaptureTests-\(UUID().uuidString)"
         twinDefaults = try XCTUnwrap(UserDefaults(suiteName: twinSuiteName))
         twinPreview = GaussianTwinPreviewSettings(defaults: twinDefaults, installer: .live)
+        // The editor's runtime policy as EditorView installs it (View > Splat Debug > Working
+        // Set, the editor default), on the same isolated suite.
+        savedWorkingSetOverride = GaussianRuntimeLimits.workingSetSplatsOverride
+        let runtimeSettings = EditorGaussianRuntimeSettings(defaults: twinDefaults)
+        runtimeSettings.activate()
+        self.runtimeSettings = runtimeSettings
     }
 
     override func tearDown() async throws {
@@ -116,6 +124,9 @@ final class GaussianLargeCaptureTests: XCTestCase {
         twinPreview?.isEnabled = false
         GaussianTwinSystem.shared.uninstall()
         twinPreview = nil
+        runtimeSettings?.deactivate()
+        runtimeSettings = nil
+        GaussianRuntimeLimits.workingSetSplatsOverride = savedWorkingSetOverride
         if let twinDefaults {
             twinDefaults.removePersistentDomain(forName: twinSuiteName)
         }
@@ -239,6 +250,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
     /// Import, cook (a `.ply`), place, render with the preview on and off.
     private func runCapture(source: URL, framesPerPose: Int, orbitFrames: Int, label: String) async throws -> CaptureOutcome {
         note("== \(label): \(source.path) ==")
+        note("editor: working set \(runtimeSettings?.workingSet.rawValue ?? "none") (\(GaussianSplatBudget.formatted(runtimeSettings?.workingSet.splatsInEffect ?? 0)) splats)")
         note("machine: geometryBudget=\(gaussianFormatBytes(MemoryBudgetManager.shared.geometryBudget)) residencyBudget=\(gaussianFormatBytes(GaussianPagingPolicy.residencyBudgetBytes())) pagingThreshold=\(gaussianFormatBytes(GaussianPagingPolicy.pagingThresholdBytes(residencyBudgetBytes: GaussianPagingPolicy.residencyBudgetBytes()))) workingSetBudget=\(GaussianSharedWorkingSet.budgetSplats()) splats (limit \(GaussianRuntimeLimits.workingSetSplats)) maxSplatsPerEntity=\(GaussianRuntimeLimits.maxSplatsPerEntity) maxSplatsPerPixel=\(GaussianRuntimeLimits.maxSplatsPerPixel)")
 
         // (a) Import into the project's Gaussians folder as the browser does: a folder package.
