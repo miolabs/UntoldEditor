@@ -600,11 +600,12 @@ struct AssetBrowserView: View {
         nonmutating set { navigation.rootExpanded = newValue }
     }
 
-    @State private var showSceneLoadConfirmation = false
-    @State private var pendingSceneToLoad: URL?
+    @State private var showUnsavedChangesAlert = false
+    @State private var unsavedChangesAlertMessage = ""
     @State private var showDeleteConfirmation = false
     @State private var pendingDeleteAsset: Asset?
     @State private var showBasePathAlert = false
+    @State private var showBlockedDuringPlayAlert = false
     @Binding var searchQuery: String
     @State private var statusMessage: String?
     @State private var statusIsError = false
@@ -612,7 +613,7 @@ struct AssetBrowserView: View {
     @State private var showImportMenu = false
     @State private var showRemoteStreamSheet = false
     @State private var remoteStreamURLString = ""
-    /// The cook sheet's item: the `.ply` of the row whose "Cook to .untoldgs…" was chosen.
+    /// The cook sheet's item: the `.ply`/`.spz` of the row whose "Cook to .untoldgs…" was chosen.
     /// Presented with `.sheet(item:)`, so the sheet exists only while there is a request,
     /// and a request always carries sources (`GaussianCookRequest.init?(sources:)`).
     @State private var pendingGaussianCook: GaussianCookRequest?
@@ -1202,18 +1203,23 @@ struct AssetBrowserView: View {
         .onReceive(NotificationCenter.default.publisher(for: .assetBrowserReload)) { _ in
             loadAssets()
         }
-        .alert("Load Scene?", isPresented: $showSceneLoadConfirmation) {
+        .alert("Unsaved Changes", isPresented: $showUnsavedChangesAlert) {
             Button("Cancel", role: .cancel) {
-                pendingSceneToLoad = nil
+                EditorPendingSwitchAction.shared.cancel()
             }
-            Button("Load Scene", role: .destructive) {
-                if let sceneURL = pendingSceneToLoad {
-                    loadScene(from: sceneURL)
-                }
-                pendingSceneToLoad = nil
+            Button("Discard Changes", role: .destructive) {
+                EditorPendingSwitchAction.shared.consume()
+            }
+            Button("Save") {
+                NotificationCenter.default.post(name: .editorMenuSave, object: nil)
             }
         } message: {
-            Text("Loading a new scene will replace the current scene. Any unsaved changes will be lost.")
+            Text(unsavedChangesAlertMessage)
+        }
+        .alert("Stop Play Mode First", isPresented: $showBlockedDuringPlayAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("This action is disabled while Play mode is running. Stop Play mode and try again.")
         }
         .alert("No Project Loaded", isPresented: $showBasePathAlert) {
             Button("OK", role: .cancel) {}
@@ -1303,7 +1309,7 @@ struct AssetBrowserView: View {
         case .scenes:
             openPanel.allowedContentTypes = [.untoldScene]
         case .gaussians:
-            openPanel.allowedContentTypes = [UTType(filenameExtension: "ply")!, UTType(filenameExtension: "untoldgs")!]
+            openPanel.allowedContentTypes = [UTType(filenameExtension: "ply")!, UTType(filenameExtension: "spz")!, UTType(filenameExtension: "untoldgs")!]
         case .materials:
             openPanel.allowedContentTypes = [.png, .jpeg, .tiff]
         case .hdr:
@@ -2259,20 +2265,20 @@ struct AssetBrowserView: View {
         return asset.name.localizedCaseInsensitiveContains(query)
     }
 
-    /// Opens the cook sheet for the `.ply` files among `urls`. With none there is nothing
-    /// to configure, so the status line says so instead of an empty sheet.
+    /// Opens the cook sheet for the `.ply`/`.spz` files among `urls`. With none there is
+    /// nothing to configure, so the status line says so instead of an empty sheet.
     private func requestGaussianCook(of urls: [URL]) {
         guard let request = GaussianCookRequest(sources: urls) else {
-            showStatus("Select .ply files to cook", isError: true)
+            showStatus("Select .ply/.spz files to cook", isError: true)
             return
         }
         pendingGaussianCook = request
     }
 
-    /// Cooks each `.ply` to `.untoldgs` with the sheet's current settings. Every file is
-    /// its own job in the Tasks panel (the context-menu cook and an import batch share
+    /// Cooks each `.ply`/`.spz` to `.untoldgs` with the sheet's current settings. Every file
+    /// is its own job in the Tasks panel (the context-menu cook and an import batch share
     /// this path); the bakes run one after another on the cook queue and the browser
-    /// refreshes as each one lands. A failed cook leaves the `.ply` untouched.
+    /// refreshes as each one lands. A failed cook leaves the source file untouched.
     private func cookGaussianSources(_ plyURLs: [URL]) {
         let settings = gaussianCookSettings
         let gaussianRoot = assetBasePath?.appendingPathComponent(AssetCategory.gaussians.rawValue, isDirectory: true)
@@ -2297,7 +2303,7 @@ struct AssetBrowserView: View {
                 case let .failure(error):
                     let detail = gaussianCookFailureDetail(error)
                     showStatus("Cook failed for \(name): \(detail)", isError: true)
-                    Logger.log(message: "❌ Cook failed for \(name): \(detail). The .ply is unchanged; re-cook from its context menu.")
+                    Logger.log(message: "❌ Cook failed for \(name): \(detail). The source file is unchanged; re-cook from its context menu.")
                 }
             }
         }
@@ -2397,7 +2403,7 @@ struct AssetBrowserView: View {
                     .draggable(AssetDragPayload(asset: asset))
                     .contextMenu {
                         if asset.category == AssetCategory.gaussians.rawValue,
-                           asset.path.pathExtension.lowercased() == "ply"
+                           ["ply", "spz"].contains(asset.path.pathExtension.lowercased())
                         {
                             Button {
                                 requestGaussianCook(of: [asset.path])
@@ -2470,7 +2476,7 @@ struct AssetBrowserView: View {
                         let itemExtension = item.pathExtension.lowercased()
                         let categoryRuntimeExtensions = AssetCategory(rawValue: itemCategory)
                             .map { runtimeAssetExtensions(for: $0) } ?? allRuntimeAssetExtensions
-                        let allowedExtensions: Set<String> = Set(["utex", "png", "jpg", "jpeg", "hdr", "exr", "cube", "tif", "tiff", "ply", "untoldgs", "json", "uscript", "remotestream"])
+                        let allowedExtensions: Set<String> = Set(["utex", "png", "jpg", "jpeg", "hdr", "exr", "cube", "tif", "tiff", "ply", "spz", "untoldgs", "json", "uscript", "remotestream"])
                             .union(categoryRuntimeExtensions)
                             .union(sourceAssetExtensions)
                         guard allowedExtensions.contains(itemExtension) else { return nil }
@@ -2567,6 +2573,9 @@ struct AssetBrowserView: View {
                 selectedAssetName = nil
             }
             loadAssets()
+            // Other listeners (e.g. the Scene Hierarchy's ProjectSceneCatalog) need to
+            // know a file disappeared too, not just this view's own asset list.
+            NotificationCenter.default.post(name: .assetBrowserReload, object: nil)
             showStatus("Queued delete: \(asset.name) (see Console)")
         } catch {
             print("❌ Failed to delete asset \(asset.name): \(error)")
@@ -2679,6 +2688,7 @@ struct AssetBrowserView: View {
         }
 
         let sceneRoot = createEntity()
+        EditorSceneDirtyState.shared.markDirty()
         let sceneName = manifestAsset.path.deletingPathExtension().lastPathComponent
         setEntityName(entityId: sceneRoot, name: sceneName)
 
@@ -2778,6 +2788,7 @@ struct AssetBrowserView: View {
         }
 
         let sceneRoot = createEntity()
+        EditorSceneDirtyState.shared.markDirty()
         let sceneName = asset.name
         setEntityName(entityId: sceneRoot, name: sceneName)
 
@@ -2933,10 +2944,16 @@ struct AssetBrowserView: View {
         else if asset.category == AssetCategory.scenes.rawValue,
                 withExtension.lowercased() == untoldSceneFileExtension
         {
-            // Show confirmation dialog before loading scene
-            pendingSceneToLoad = asset.path
-            showSceneLoadConfirmation = true
-            editorController?.currentSceneURL = asset.path
+            guard gameMode == false else {
+                showBlockedDuringPlayAlert = true
+                return
+            }
+            requestDestructiveSceneAction(
+                { loadScene(from: asset.path) },
+                describing: "loading a new scene",
+                showAlert: $showUnsavedChangesAlert,
+                alertMessage: $unsavedChangesAlertMessage
+            )
         }
         // Handle HDR files (hdr, exr)
         else if asset.category == AssetCategory.hdr.rawValue,
@@ -2978,6 +2995,10 @@ struct AssetBrowserView: View {
     // MARK: - Load Scene Helper
 
     private func loadScene(from url: URL) {
+        guard gameMode == false else {
+            showBlockedDuringPlayAlert = true
+            return
+        }
         guard let sceneData = loadGameScene(from: url) else {
             print("❌ Failed to load scene from \(url.lastPathComponent)")
             return
@@ -2988,9 +3009,12 @@ struct AssetBrowserView: View {
         removeGizmo()
         EditorComponentsState.shared.clear()
         EditorGaussianAssetState.shared.clear()
+        EditorUndoManager.shared.clear()
+        EditorSceneDirtyState.shared.clear()
 
         // Load new scene
-        deserializeScene(sceneData: sceneData)
+        deserializeScene(sceneData: sceneData, onGaussianEntityRestored: restoreEditorGaussianState)
+        NotificationCenter.default.post(name: .editorPostFXStateDidChange, object: nil)
 
         // Reset editor state
         selectionManager.selectedEntity = nil
