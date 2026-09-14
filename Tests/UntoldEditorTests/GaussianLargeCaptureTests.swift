@@ -24,7 +24,9 @@
 //  engine debug switches to the main variants (`disableBlendCap`, `disableWorkingSetBudget`,
 //  `disableChunkCull`, `disableScreenWeightedQuotas`, `disableOpaqueDepthTest`,
 //  `disableHZBOcclusionCull`, `fineOnly`, `workingSet=<splats>`) for an A/B against a run
-//  without them.
+//  without them. `UNTOLD_EDITOR_LARGE_CAPTURE_AA=none|fxaa|smaa` sets the engine's
+//  anti-aliasing mode for the run; the frame dump then also writes the presented drawable
+//  (`-final.png`), the frame after the look and anti-aliasing passes.
 //
 
 import CoreGraphics
@@ -47,6 +49,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
     static let forcePagingEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FORCE_PAGING"
     static let focusEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FOCUS"
     static let debugEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_DEBUG"
+    static let antiAliasingEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_AA"
 
     private let viewportWidth = 1920
     private let viewportHeight = 1080
@@ -76,6 +79,9 @@ final class GaussianLargeCaptureTests: XCTestCase {
     private var variantTag = ""
     private var savedThresholdOverride: Int?
     private var savedDebugSwitches: [(ReferenceWritableKeyPath<GaussianDebugOptions, Bool>, Bool)] = []
+    private var savedAntiAliasingMode = AntiAliasingMode.fxaa
+    /// The drawable the last drawn frame was presented to, for the `-final.png` dump.
+    private var lastFrameDrawableTexture: MTLTexture?
 
     // MARK: - Set-up
 
@@ -145,6 +151,16 @@ final class GaussianLargeCaptureTests: XCTestCase {
         if let debug = environment[Self.debugEnvironmentKey], !debug.isEmpty {
             applyDebugSwitches(debug)
         }
+        savedAntiAliasingMode = antiAliasingMode
+        if let aa = environment[Self.antiAliasingEnvironmentKey] {
+            switch aa.lowercased() {
+            case "none": antiAliasingMode = .none
+            case "fxaa": antiAliasingMode = .fxaa
+            case "smaa": antiAliasingMode = .smaa
+            default: break
+            }
+            note("anti-aliasing: \(antiAliasingMode)")
+        }
     }
 
     override func tearDown() async throws {
@@ -175,6 +191,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
         GaussianDebugOptions.shared.disablePaging = savedDisablePaging
         GaussianDebugOptions.shared.gaussianLevelMode = savedLevelMode
         GaussianPagingPolicy.pagingThresholdBytesOverride = savedThresholdOverride
+        antiAliasingMode = savedAntiAliasingMode
         for (keyPath, value) in savedDebugSwitches.reversed() {
             GaussianDebugOptions.shared[keyPath: keyPath] = value
         }
@@ -482,12 +499,16 @@ final class GaussianLargeCaptureTests: XCTestCase {
     /// One renderer frame, waited for, with the frame's readbacks.
     private func drawFrame(component: GaussianComponent) throws -> FrameSample {
         var sample = FrameSample()
+        // The view caches the frame's drawable, so fetching it here yields the one the
+        // renderer presents; its texture is readable (the engine clears framebufferOnly).
+        let drawable = frameDirectory != nil ? renderer.metalView.currentDrawable : nil
         let cpuStart = CACurrentMediaTime()
         renderer.draw(in: renderer.metalView)
         sample.cpuMs = (CACurrentMediaTime() - cpuStart) * 1000
         let commandBuffer: MTLCommandBuffer? = renderInfo.lastCommandBuffer
         commandBuffer?.waitUntilCompleted()
         sample.completed = commandBuffer?.status == .completed
+        lastFrameDrawableTexture = drawable?.texture
         if let commandBuffer, commandBuffer.gpuEndTime > 0 {
             sample.gpuMs = (commandBuffer.gpuEndTime - commandBuffer.gpuStartTime) * 1000
         }
@@ -596,6 +617,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
         let targets: [(String, MTLTexture?)] = [
             ("composite", textureResources.sceneCompositeTexture),
             ("gaussian", textureResources.gaussianColorMap),
+            ("final", lastFrameDrawableTexture),
         ]
         for (kind, texture) in targets {
             guard let texture, let image = Self.cgImage(from: texture) else {
