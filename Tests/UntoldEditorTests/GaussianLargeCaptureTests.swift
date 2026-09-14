@@ -626,11 +626,38 @@ final class GaussianLargeCaptureTests: XCTestCase {
                 continue
             }
             let url = frameDirectory.appendingPathComponent("\(pose)-\(tag)-\(kind).png")
+            writeCamera(pose: pose, tag: tag, into: frameDirectory)
             guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { continue }
             CGImageDestinationAddImage(destination, image, nil)
             if CGImageDestinationFinalize(destination) {
                 note("frame: \(url.path)")
             }
+        }
+    }
+
+    /// The camera of the frame just dumped, as JSON beside it (eye, target, up, vertical field
+    /// of view in degrees, near, far, viewport), so a reference renderer can reproduce the view.
+    private func writeCamera(pose: String, tag: String, into directory: URL) {
+        guard let component = scene.get(component: CameraComponent.self, for: cameraEntity) else { return }
+        let view = component.viewSpace
+        let inverse = view.inverse
+        let eye = inverse.columns.3
+        let forward = -inverse.columns.2
+        let upVector = inverse.columns.1
+        let camera: [String: Any] = [
+            "eye": [eye.x, eye.y, eye.z],
+            "forward": [forward.x, forward.y, forward.z],
+            "up": [upVector.x, upVector.y, upVector.z],
+            "fovDegrees": fov,
+            "near": near,
+            "far": far,
+            "viewport": [viewportWidth, viewportHeight],
+            "viewMatrixColumns": (0 ..< 4).map { c in (0 ..< 4).map { r in view[c][r] } },
+            "projectionMatrixColumns": (0 ..< 4).map { c in (0 ..< 4).map { r in renderInfo.perspectiveSpace[c][r] } },
+            "entityPosition": [0, 0, 0],
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: camera, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: directory.appendingPathComponent("\(pose)-\(tag)-camera.json"))
         }
     }
 
