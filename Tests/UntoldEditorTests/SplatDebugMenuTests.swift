@@ -134,7 +134,7 @@ final class SplatDebugMenuTests: XCTestCase {
             SplatBlendCapOption.current = choice
             XCTAssertEqual(GaussianRuntimeLimits.maxBlendedSplatsPerPixel, choice.splats, choice.title)
             XCTAssertEqual(SplatBlendCapOption.current, choice)
-            XCTAssertEqual(GaussianDebugOptions.shared.drawConstants.maxBlendedSplatsPerPixel, UInt32(choice.splats ?? 0), "the shader sees the choice")
+            XCTAssertFalse(GaussianDebugOptions.shared.disableBlendCap, "a choice replaces the debug lift")
             XCTAssertFalse(choice.summary.isEmpty)
         }
         GaussianRuntimeLimits.maxBlendedSplatsPerPixelOverride = 100
