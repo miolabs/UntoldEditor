@@ -37,7 +37,7 @@ rm -rf "$APP_BUNDLE"
 
 # Build the executable with Swift Package Manager
 echo "🔧 Building executable..."
-swift build --configuration release
+swift build --configuration release -Xswiftc -DENGINE_STATS_ENABLED
 
 # Create app bundle structure
 echo "📦 Creating app bundle structure..."
@@ -54,6 +54,20 @@ if [ -f "$METALLIB_PATH" ]; then
     cp "$METALLIB_PATH" "$APP_BUNDLE/Contents/Resources/"
 else
     echo "⚠️  Warning: Metal shader library not found at $METALLIB_PATH"
+fi
+
+# Copy UntoldEngine's SPM resource bundle (Bundle.module) to the app root.
+# Without this, Bundle.module's generated accessor can only find shaders/HDR
+# skies/icons via a hardcoded fallback path pointing at the build machine's
+# own .build directory — the app crashes with an uncatchable fatalError on
+# any other machine. See Bundle.main.bundleURL.appendingPathComponent(...)
+# lookup in SwiftPM's generated resource_bundle_accessor.swift.
+UNTOLD_ENGINE_RESOURCE_BUNDLE="$BUILD_DIR/UntoldEngine_UntoldEngine.bundle"
+if [ -d "$UNTOLD_ENGINE_RESOURCE_BUNDLE" ]; then
+    echo "📦 Copying UntoldEngine resource bundle..."
+    cp -R "$UNTOLD_ENGINE_RESOURCE_BUNDLE" "$APP_BUNDLE/"
+else
+    echo "⚠️  Warning: UntoldEngine resource bundle not found at $UNTOLD_ENGINE_RESOURCE_BUNDLE — run 'swift build' first"
 fi
 
 # Copy app icon if it exists
