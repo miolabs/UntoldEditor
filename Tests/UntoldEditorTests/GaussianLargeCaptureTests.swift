@@ -29,9 +29,9 @@ import Darwin
 import ImageIO
 import Metal
 import simd
+import UniformTypeIdentifiers
 @testable import UntoldEditor
 @testable import UntoldEngine
-import UniformTypeIdentifiers
 import UntoldGaussianTwins
 import XCTest
 
@@ -598,7 +598,9 @@ final class GaussianLargeCaptureTests: XCTestCase {
             }
         case .rgba8Unorm, .rgba8Unorm_srgb:
             copy.getBytes(&rgba, bytesPerRow: width * 4, from: region, mipmapLevel: 0)
-            for i in 0 ..< pixels { rgba[i * 4 + 3] = 255 }
+            for i in 0 ..< pixels {
+                rgba[i * 4 + 3] = 255
+            }
         case .rgba16Float:
             var raw = [Float16](repeating: 0, count: pixels * 4)
             copy.getBytes(&raw, bytesPerRow: width * 8, from: region, mipmapLevel: 0)
