@@ -364,11 +364,12 @@ func gaussianSourceBounds(plyURL: URL) throws -> (min: simd_float3, max: simd_fl
 /// Writes `<name>.untoldgs` (or `<name>_lodN.untoldgs` tiers) beside `plyURL` (a `.ply` or
 /// `.spz` source), or inside `outputDirectory` when the editor is organizing the asset as a
 /// folder package. A recentred cook reads the source bounds first and bakes the offset into
-/// the transform. `control` follows and stops the bake (`UntoldGSCookControl`): the engine
-/// reports its phase and fraction through it and polls its cancellation between windows and
-/// chunk batches (a `.spz` is decoded whole, so its read reports once and the polling starts
-/// with the cook); a cancelled bake throws `UntoldGSCookError.cancelled` with nothing
-/// written, its tiers staged in temporary files until the last one is complete.
+/// the transform. `control` follows and stops the bake (`UntoldGSCookControl`): it is
+/// polled before and after the bounds read, then the engine reports its phase and fraction
+/// through it and polls its cancellation between windows and chunk batches (a `.spz` is
+/// decoded whole, so its read reports once and the polling starts with the cook); a
+/// cancelled bake throws `UntoldGSCookError.cancelled` with nothing written, its tiers
+/// staged in temporary files until the last one is complete.
 func cookGaussianPLY(
     plyURL: URL,
     settings: GaussianCookSettings,
@@ -384,6 +385,10 @@ func cookGaussianPLY(
         ?? plyURL.deletingPathExtension().appendingPathExtension("untoldgs")
     try control?.checkCancelled()
     let bounds = settings.recenter ? try gaussianSourceBounds(plyURL: plyURL) : nil
+    // The bounds pass is the whole streamed `.ply` (or a whole `.spz` decode) with no poll of
+    // its own, and the engine's first poll comes with its first report -- past a second whole
+    // decode for a `.spz`. A cancel that arrived meanwhile stops here instead.
+    try control?.checkCancelled()
     let cookOptions = settings.cookOptions(recenteringBounds: bounds)
     let levelCount = max(1, settings.levelCount)
     if plyURL.pathExtension.lowercased() == "spz" {
@@ -1330,12 +1335,18 @@ struct GaussianCookSheet: View {
         .task(id: sourceURLs) {
             // .ply: a header-only read, cheap however large the capture. .spz has no
             // header-only count (the point count lives inside the gzip payload), so this
-            // decodes the whole file -- batches show no count either way.
+            // decodes the whole file -- batches show no count either way. The read runs off
+            // the main actor so a large .spz never freezes the sheet; the guard drops the
+            // result once the selection has moved on and a newer task owns `sourceInfo`.
             guard sourceURLs.count == 1, let url = sourceURLs.first else {
                 sourceInfo = nil
                 return
             }
-            sourceInfo = try? GaussianCookSourceInfo.read(from: url)
+            let info = await Task.detached(priority: .userInitiated) {
+                try? GaussianCookSourceInfo.read(from: url)
+            }.value
+            guard !Task.isCancelled else { return }
+            sourceInfo = info
         }
     }
 }

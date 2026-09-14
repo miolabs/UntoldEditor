@@ -2301,7 +2301,7 @@ struct AssetBrowserView: View {
                     showStatus("Cooked \(report.keptSplatCount) of \(report.inputSplatCount) splats → \(names)")
                     Logger.log(message: "Cooked \(name): kept \(report.keptSplatCount) of \(report.inputSplatCount) (opacity \(report.prunedByOpacity), degenerate \(report.prunedByDegenerateGeometry), crop \(report.prunedByCrop)), SH degree \(report.shDegree)")
                 case let .failure(error) where error is GaussianCookCancelledError:
-                    showStatus("Cook cancelled for \(name); the .ply is unchanged")
+                    showStatus("Cook cancelled for \(name); the source file is unchanged")
                 case let .failure(error):
                     let detail = gaussianCookFailureDetail(error)
                     showStatus("Cook failed for \(name): \(detail)", isError: true)
