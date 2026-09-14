@@ -396,6 +396,7 @@ enum SplatDebugOption: String, CaseIterable {
     case blendCap
     // Disk paging of a large .untoldgs (GaussianPageManager).
     case paging
+    case forcePaging
     case freezePaging
     case residencyTint
     // Per-chunk coarse levels; the level mode itself is `SplatLevelModeOption`.
@@ -416,7 +417,7 @@ enum SplatDebugOption: String, CaseIterable {
     var group: Group {
         switch self {
         case .hzbOcclusionCull, .opaqueDepthTest, .blendCap: .draw
-        case .paging, .freezePaging, .residencyTint: .paging
+        case .paging, .forcePaging, .freezePaging, .residencyTint: .paging
         case .levelCrossFade, .levelTint: .levels
         case .chunkCull, .workingSetBudget, .screenWeightedQuotas: .budget
         }
@@ -428,6 +429,7 @@ enum SplatDebugOption: String, CaseIterable {
         case .opaqueDepthTest: "Disable Splat Opaque Depth Test"
         case .blendCap: "Disable Splat Per-Pixel Blend Cap"
         case .paging: "Disable Splat Paging"
+        case .forcePaging: "Force Splat Paging"
         case .freezePaging: "Freeze Splat Paging"
         case .residencyTint: "Tint Splats by Residency"
         case .levelCrossFade: "Disable Splat Level Cross-Fade"
@@ -444,6 +446,7 @@ enum SplatDebugOption: String, CaseIterable {
         case .opaqueDepthTest: "Splat fragments are no longer hidden behind meshes, gizmos or the grid."
         case .blendCap: "Every sorted splat that reaches a pixel is blended, not just the first 64."
         case .paging: "Every .untoldgs loads whole at its next load, whatever its size, instead of paging from disk through a pool: the pre-paging behaviour, for an A/B of what the pool costs and what its fill-in shows."
+        case .forcePaging: "Every chunked .untoldgs pages from disk at its next load, whatever its size (the paging threshold is set to zero): a small capture then takes the paged path through a pool that holds it whole, so the fill-in, the residency tint and the demand-driven reads can be checked without a capture above the threshold. Disable Splat Paging wins when both are on."
         case .freezePaging: "Paged splats keep their resident set as it is: nothing is read, nothing is evicted, so the image is a function of the camera alone."
         case .residencyTint: "Every splat of a paged entity is tinted by its chunk's resident fraction: green whole, yellow deep, red head-only."
         case .levelCrossFade: "A chunk switches between its fine records and a coarse level at once instead of cross-fading over a few frames."
@@ -462,6 +465,7 @@ enum SplatDebugOption: String, CaseIterable {
             case .opaqueDepthTest: options.disableOpaqueDepthTest
             case .blendCap: options.disableBlendCap
             case .paging: options.disablePaging
+            case .forcePaging: GaussianPagingPolicy.pagingThresholdBytesOverride == 0
             case .freezePaging: options.freezePaging
             case .residencyTint: options.residencyDebugTint
             case .levelCrossFade: options.disableLevelCrossFade
@@ -478,6 +482,7 @@ enum SplatDebugOption: String, CaseIterable {
             case .opaqueDepthTest: options.disableOpaqueDepthTest = newValue
             case .blendCap: options.disableBlendCap = newValue
             case .paging: options.disablePaging = newValue
+            case .forcePaging: GaussianPagingPolicy.pagingThresholdBytesOverride = newValue ? 0 : nil
             case .freezePaging: options.freezePaging = newValue
             case .residencyTint: options.residencyDebugTint = newValue
             case .levelCrossFade: options.disableLevelCrossFade = newValue

@@ -14,6 +14,7 @@ import XCTest
 final class SplatDebugMenuTests: XCTestCase {
     private var savedSwitches: [SplatDebugOption: Bool] = [:]
     private var savedLevelMode = GaussianLevelMode.auto
+    private var savedThresholdOverride: Int?
 
     override func setUp() {
         super.setUp()
@@ -21,6 +22,7 @@ final class SplatDebugMenuTests: XCTestCase {
             savedSwitches[option] = option.isEnabled
         }
         savedLevelMode = GaussianDebugOptions.shared.gaussianLevelMode
+        savedThresholdOverride = GaussianPagingPolicy.pagingThresholdBytesOverride
     }
 
     override func tearDown() {
@@ -28,6 +30,7 @@ final class SplatDebugMenuTests: XCTestCase {
             option.isEnabled = value
         }
         GaussianDebugOptions.shared.gaussianLevelMode = savedLevelMode
+        GaussianPagingPolicy.pagingThresholdBytesOverride = savedThresholdOverride
         super.tearDown()
     }
 
@@ -48,6 +51,10 @@ final class SplatDebugMenuTests: XCTestCase {
         XCTAssertTrue(options.freezePaging)
         XCTAssertFalse(options.disablePaging)
         SplatDebugOption.freezePaging.isEnabled = false
+        SplatDebugOption.forcePaging.isEnabled = true
+        XCTAssertFalse(options.disablePaging)
+        XCTAssertFalse(options.freezePaging)
+        SplatDebugOption.forcePaging.isEnabled = false
         SplatDebugOption.residencyTint.isEnabled = true
         XCTAssertTrue(options.residencyDebugTint)
         SplatDebugOption.residencyTint.isEnabled = false
@@ -78,11 +85,36 @@ final class SplatDebugMenuTests: XCTestCase {
         }
         let groups = SplatDebugOption.allCases.map(\.group.rawValue)
         XCTAssertEqual(groups, groups.sorted(), "the groups are contiguous in menu order")
-        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .paging }, [.paging, .freezePaging, .residencyTint])
+        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .paging }, [.paging, .forcePaging, .freezePaging, .residencyTint])
         XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .levels }, [.levelCrossFade, .levelTint])
         XCTAssertEqual(SplatDebugOption.paging.title, "Disable Splat Paging")
         XCTAssertEqual(SplatDebugOption.levelTint.title, "Tint Splats by Level")
         XCTAssertEqual(SplatDebugOption.levelCrossFade.title, "Disable Splat Level Cross-Fade")
+    }
+
+    func test_forcePagingZeroesTheEnginePagingThreshold() {
+        let budget = 6 << 30
+        GaussianPagingPolicy.pagingThresholdBytesOverride = nil
+        XCTAssertFalse(SplatDebugOption.forcePaging.isEnabled)
+        let platformThreshold = GaussianPagingPolicy.pagingThresholdBytes(residencyBudgetBytes: budget)
+        XCTAssertGreaterThan(platformThreshold, 0)
+
+        SplatDebugOption.forcePaging.isEnabled = true
+        XCTAssertEqual(GaussianPagingPolicy.pagingThresholdBytesOverride, 0)
+        XCTAssertEqual(GaussianPagingPolicy.pagingThresholdBytes(residencyBudgetBytes: budget), 0)
+        // Any chunked asset now pages; the disable switch still wins.
+        XCTAssertTrue(GaussianPagingPolicy.shouldPage(assetBytes: 1, thresholdBytes: 0, allowPaging: true, disablePaging: false))
+        XCTAssertFalse(GaussianPagingPolicy.shouldPage(assetBytes: 1, thresholdBytes: 0, allowPaging: true, disablePaging: true))
+        XCTAssertEqual(SplatDebugOption.forcePaging.title, "Force Splat Paging")
+
+        SplatDebugOption.forcePaging.isEnabled = false
+        XCTAssertNil(GaussianPagingPolicy.pagingThresholdBytesOverride)
+        XCTAssertEqual(GaussianPagingPolicy.pagingThresholdBytes(residencyBudgetBytes: budget), platformThreshold)
+
+        // An override the engine set to another figure is not this switch.
+        GaussianPagingPolicy.pagingThresholdBytesOverride = 64 << 20
+        XCTAssertFalse(SplatDebugOption.forcePaging.isEnabled)
+        GaussianPagingPolicy.pagingThresholdBytesOverride = nil
     }
 
     func test_levelModeRoundTripsThroughItsRadioItems() {

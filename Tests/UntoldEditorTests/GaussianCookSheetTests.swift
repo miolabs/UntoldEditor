@@ -907,6 +907,12 @@ final class GaussianCookSheetTests: XCTestCase {
         // 1 M splats without SH: 16 MiB, loads whole.
         let whole = gaussianCookRuntimeCaption(keptSplatCount: 1_000_000, shDegree: 0, residencyBudgetBytes: 1 << 30, pagePoolMaxBytes: 1 << 30, workingSetSplats: 6_000_000)
         XCTAssertEqual(whole, "About 15 MB of packed splats at runtime: loads whole (below 512 MB); the frame draws at most 6,000,000 splats.")
+        // View > Splat Debug > Force Splat Paging zeroes the threshold: the same file pages.
+        let savedOverride = GaussianPagingPolicy.pagingThresholdBytesOverride
+        defer { GaussianPagingPolicy.pagingThresholdBytesOverride = savedOverride }
+        GaussianPagingPolicy.pagingThresholdBytesOverride = 0
+        let forced = gaussianCookRuntimeCaption(keptSplatCount: 1_000_000, shDegree: 0, residencyBudgetBytes: 1 << 30, pagePoolMaxBytes: 1 << 30, workingSetSplats: 6_000_000)
+        XCTAssertEqual(forced, "About 15 MB of packed splats at runtime: pages from disk (Force Splat Paging is on) through a 15 MB pool; the frame draws at most 6,000,000 splats.")
     }
 
     // MARK: - Recenter

@@ -293,7 +293,9 @@ func gaussianCookRuntimeCaption(
     var caption = "About \(gaussianCookFormatGiB(packed)) of packed splats at runtime: "
     if packed > threshold {
         let pool = min(packed, residencyBudgetBytes, pagePoolMaxBytes)
-        caption += "pages from disk (above \(gaussianCookFormatGiB(threshold))) through a \(gaussianCookFormatGiB(pool)) pool"
+        // A zero threshold is the View > Splat Debug > Force Splat Paging switch.
+        let reason = threshold == 0 ? "Force Splat Paging is on" : "above \(gaussianCookFormatGiB(threshold))"
+        caption += "pages from disk (\(reason)) through a \(gaussianCookFormatGiB(pool)) pool"
     } else {
         caption += "loads whole (below \(gaussianCookFormatGiB(threshold)))"
     }
