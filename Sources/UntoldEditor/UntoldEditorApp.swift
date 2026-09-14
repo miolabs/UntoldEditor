@@ -421,6 +421,7 @@ enum SplatDebugOption: String, CaseIterable {
     case hzbOcclusionCull
     case opaqueDepthTest
     case antiAliasSplatPixels
+    case toneMapSplatPixels
     // Disk paging of a large .untoldgs (GaussianPageManager).
     case paging
     case forcePaging
@@ -443,7 +444,7 @@ enum SplatDebugOption: String, CaseIterable {
 
     var group: Group {
         switch self {
-        case .hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels: .draw
+        case .hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels, .toneMapSplatPixels: .draw
         case .paging, .forcePaging, .freezePaging, .residencyTint: .paging
         case .levelCrossFade, .levelTint: .levels
         case .chunkCull, .workingSetBudget, .screenWeightedQuotas: .budget
@@ -455,6 +456,7 @@ enum SplatDebugOption: String, CaseIterable {
         case .hzbOcclusionCull: "Disable Splat HZB Occlusion Cull"
         case .opaqueDepthTest: "Disable Splat Opaque Depth Test"
         case .antiAliasSplatPixels: "Anti-alias Splat Pixels"
+        case .toneMapSplatPixels: "Tone-map Splat Pixels"
         case .paging: "Disable Splat Paging"
         case .forcePaging: "Force Splat Paging"
         case .freezePaging: "Freeze Splat Paging"
@@ -472,6 +474,7 @@ enum SplatDebugOption: String, CaseIterable {
         case .hzbOcclusionCull: "Splats are no longer culled against the previous frame's depth pyramid."
         case .opaqueDepthTest: "Splat fragments are no longer hidden behind meshes, gizmos or the grid."
         case .antiAliasSplatPixels: "FXAA and SMAA filter splat pixels like everything else, blurring their fine structure: the behaviour before the passes kept splat pixels as the splat pass blended them, for an A/B."
+        case .toneMapSplatPixels: "The look pass grades and tone-maps splat pixels like everything else, lifting and flattening a capture that is a finished photograph already: the behaviour before the pass kept splat pixels as they came, for an A/B."
         case .paging: "Every .untoldgs loads whole at its next load, whatever its size, instead of paging from disk through a pool: the pre-paging behaviour, for an A/B of what the pool costs and what its fill-in shows."
         case .forcePaging: "Every chunked .untoldgs pages from disk at its next load, whatever its size (the paging threshold is set to zero): a small capture then takes the paged path through a pool that holds it whole, so the fill-in, the residency tint and the demand-driven reads can be checked without a capture above the threshold. Disable Splat Paging wins when both are on."
         case .freezePaging: "Paged splats keep their resident set as it is: nothing is read, nothing is evicted, so the image is a function of the camera alone."
@@ -491,6 +494,7 @@ enum SplatDebugOption: String, CaseIterable {
             case .hzbOcclusionCull: options.disableHZBOcclusionCull
             case .opaqueDepthTest: options.disableOpaqueDepthTest
             case .antiAliasSplatPixels: options.antiAliasSplatPixels
+            case .toneMapSplatPixels: options.toneMapSplatPixels
             case .paging: options.disablePaging
             case .forcePaging: GaussianPagingPolicy.pagingThresholdBytesOverride == 0
             case .freezePaging: options.freezePaging
@@ -508,6 +512,7 @@ enum SplatDebugOption: String, CaseIterable {
             case .hzbOcclusionCull: options.disableHZBOcclusionCull = newValue
             case .opaqueDepthTest: options.disableOpaqueDepthTest = newValue
             case .antiAliasSplatPixels: options.antiAliasSplatPixels = newValue
+            case .toneMapSplatPixels: options.toneMapSplatPixels = newValue
             case .paging: options.disablePaging = newValue
             case .forcePaging: GaussianPagingPolicy.pagingThresholdBytesOverride = newValue ? 0 : nil
             case .freezePaging: options.freezePaging = newValue

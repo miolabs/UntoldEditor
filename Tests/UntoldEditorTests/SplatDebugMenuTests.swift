@@ -59,6 +59,11 @@ final class SplatDebugMenuTests: XCTestCase {
         XCTAssertTrue(options.antiAliasSplatPixels)
         SplatDebugOption.antiAliasSplatPixels.isEnabled = false
         XCTAssertFalse(options.antiAliasSplatPixels)
+        SplatDebugOption.toneMapSplatPixels.isEnabled = true
+        XCTAssertTrue(options.toneMapSplatPixels)
+        XCTAssertFalse(options.antiAliasSplatPixels, "its own switch")
+        SplatDebugOption.toneMapSplatPixels.isEnabled = false
+        XCTAssertFalse(options.toneMapSplatPixels)
         SplatDebugOption.residencyTint.isEnabled = true
         XCTAssertTrue(options.residencyDebugTint)
         SplatDebugOption.residencyTint.isEnabled = false
@@ -89,7 +94,7 @@ final class SplatDebugMenuTests: XCTestCase {
         }
         let groups = SplatDebugOption.allCases.map(\.group.rawValue)
         XCTAssertEqual(groups, groups.sorted(), "the groups are contiguous in menu order")
-        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .draw }, [.hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels])
+        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .draw }, [.hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels, .toneMapSplatPixels])
         XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .paging }, [.paging, .forcePaging, .freezePaging, .residencyTint])
         XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .levels }, [.levelCrossFade, .levelTint])
         XCTAssertEqual(SplatDebugOption.paging.title, "Disable Splat Paging")
