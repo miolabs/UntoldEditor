@@ -20,7 +20,11 @@
 //  View > Splat Debug > Force Splat Paging does, so a small capture takes the paged path.
 //  `UNTOLD_EDITOR_LARGE_CAPTURE_FOCUS=x,y,z,radius` frames the poses on that sphere (asset
 //  space) instead of the asset's bounding box, whose centre and radius a capture's far
-//  background floaters usually dominate.
+//  background floaters usually dominate. `UNTOLD_EDITOR_LARGE_CAPTURE_DEBUG=a,b,...` applies
+//  engine debug switches to the main variants (`disableBlendCap`, `disableWorkingSetBudget`,
+//  `disableChunkCull`, `disableScreenWeightedQuotas`, `disableOpaqueDepthTest`,
+//  `disableHZBOcclusionCull`, `fineOnly`, `workingSet=<splats>`) for an A/B against a run
+//  without them.
 //
 
 import CoreGraphics
@@ -42,6 +46,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
     static let framesEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FRAMES"
     static let forcePagingEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FORCE_PAGING"
     static let focusEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FOCUS"
+    static let debugEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_DEBUG"
 
     private let viewportWidth = 1920
     private let viewportHeight = 1080
@@ -70,6 +75,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
     /// The variant the frame being rendered belongs to, for the PNG's name.
     private var variantTag = ""
     private var savedThresholdOverride: Int?
+    private var savedDebugSwitches: [(ReferenceWritableKeyPath<GaussianDebugOptions, Bool>, Bool)] = []
 
     // MARK: - Set-up
 
@@ -136,6 +142,9 @@ final class GaussianLargeCaptureTests: XCTestCase {
         let runtimeSettings = EditorGaussianRuntimeSettings(defaults: twinDefaults)
         runtimeSettings.activate()
         self.runtimeSettings = runtimeSettings
+        if let debug = environment[Self.debugEnvironmentKey], !debug.isEmpty {
+            applyDebugSwitches(debug)
+        }
     }
 
     override func tearDown() async throws {
@@ -166,6 +175,10 @@ final class GaussianLargeCaptureTests: XCTestCase {
         GaussianDebugOptions.shared.disablePaging = savedDisablePaging
         GaussianDebugOptions.shared.gaussianLevelMode = savedLevelMode
         GaussianPagingPolicy.pagingThresholdBytesOverride = savedThresholdOverride
+        for (keyPath, value) in savedDebugSwitches.reversed() {
+            GaussianDebugOptions.shared[keyPath: keyPath] = value
+        }
+        savedDebugSwitches = []
         Logger.logLevel = savedLogLevel
         Logger.set(category: .gaussian, enabled: savedGaussianLog)
         if let projectURL, !keepProject {
@@ -541,6 +554,36 @@ final class GaussianLargeCaptureTests: XCTestCase {
             }
         }
         return frames
+    }
+
+    // MARK: - Debug switches (UNTOLD_EDITOR_LARGE_CAPTURE_DEBUG)
+
+    /// Applies the named engine switches for the run; the booleans are restored in tearDown,
+    /// the level mode and working set by the existing saves.
+    private func applyDebugSwitches(_ list: String) {
+        let flags: [String: ReferenceWritableKeyPath<GaussianDebugOptions, Bool>] = [
+            "disableBlendCap": \.disableBlendCap,
+            "disableWorkingSetBudget": \.disableWorkingSetBudget,
+            "disableChunkCull": \.disableChunkCull,
+            "disableScreenWeightedQuotas": \.disableScreenWeightedQuotas,
+            "disableOpaqueDepthTest": \.disableOpaqueDepthTest,
+            "disableHZBOcclusionCull": \.disableHZBOcclusionCull,
+        ]
+        for item in list.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) where !item.isEmpty {
+            if let keyPath = flags[item] {
+                savedDebugSwitches.append((keyPath, GaussianDebugOptions.shared[keyPath: keyPath]))
+                GaussianDebugOptions.shared[keyPath: keyPath] = true
+                note("debug: \(item) on")
+            } else if item == "fineOnly" {
+                GaussianDebugOptions.shared.gaussianLevelMode = .fineOnly
+                note("debug: level mode fineOnly")
+            } else if item.hasPrefix("workingSet="), let splats = Int(item.dropFirst("workingSet=".count)) {
+                GaussianRuntimeLimits.workingSetSplatsOverride = splats
+                note("debug: working set \(splats) splats")
+            } else {
+                note("debug: unknown switch \(item) ignored")
+            }
+        }
     }
 
     // MARK: - Frame dump (UNTOLD_EDITOR_LARGE_CAPTURE_FRAMES)
