@@ -57,7 +57,6 @@ final class SplatDebugMenuTests: XCTestCase {
         SplatDebugOption.forcePaging.isEnabled = false
         SplatDebugOption.antiAliasSplatPixels.isEnabled = true
         XCTAssertTrue(options.antiAliasSplatPixels)
-        XCTAssertFalse(options.disableBlendCap)
         SplatDebugOption.antiAliasSplatPixels.isEnabled = false
         XCTAssertFalse(options.antiAliasSplatPixels)
         SplatDebugOption.residencyTint.isEnabled = true
@@ -90,7 +89,7 @@ final class SplatDebugMenuTests: XCTestCase {
         }
         let groups = SplatDebugOption.allCases.map(\.group.rawValue)
         XCTAssertEqual(groups, groups.sorted(), "the groups are contiguous in menu order")
-        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .draw }, [.hzbOcclusionCull, .opaqueDepthTest, .blendCap, .antiAliasSplatPixels])
+        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .draw }, [.hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels])
         XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .paging }, [.paging, .forcePaging, .freezePaging, .residencyTint])
         XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .levels }, [.levelCrossFade, .levelTint])
         XCTAssertEqual(SplatDebugOption.paging.title, "Disable Splat Paging")
@@ -121,6 +120,27 @@ final class SplatDebugMenuTests: XCTestCase {
         GaussianPagingPolicy.pagingThresholdBytesOverride = 64 << 20
         XCTAssertFalse(SplatDebugOption.forcePaging.isEnabled)
         GaussianPagingPolicy.pagingThresholdBytesOverride = nil
+    }
+
+    func test_blendCapRoundTripsThroughItsRadioItems() {
+        let savedOverride = GaussianRuntimeLimits.maxBlendedSplatsPerPixelOverride
+        let savedDisable = GaussianDebugOptions.shared.disableBlendCap
+        defer {
+            GaussianRuntimeLimits.maxBlendedSplatsPerPixelOverride = savedOverride
+            GaussianDebugOptions.shared.disableBlendCap = savedDisable
+        }
+        XCTAssertEqual(SplatBlendCapOption.allCases.map(\.title), ["64 (Mobile Default)", "128 (Mac Default)", "Unlimited"])
+        for choice in SplatBlendCapOption.allCases {
+            SplatBlendCapOption.current = choice
+            XCTAssertEqual(GaussianRuntimeLimits.maxBlendedSplatsPerPixel, choice.splats, choice.title)
+            XCTAssertEqual(SplatBlendCapOption.current, choice)
+            XCTAssertEqual(GaussianDebugOptions.shared.drawConstants.maxBlendedSplatsPerPixel, UInt32(choice.splats ?? 0), "the shader sees the choice")
+            XCTAssertFalse(choice.summary.isEmpty)
+        }
+        GaussianRuntimeLimits.maxBlendedSplatsPerPixelOverride = 100
+        XCTAssertEqual(SplatBlendCapOption.current, .mac, "an override set by the engine shows as the nearest choice")
+        GaussianRuntimeLimits.maxBlendedSplatsPerPixelOverride = 70
+        XCTAssertEqual(SplatBlendCapOption.current, .mobile)
     }
 
     func test_levelModeRoundTripsThroughItsRadioItems() {

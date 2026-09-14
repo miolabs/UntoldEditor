@@ -44,6 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var rightPanelItem: NSMenuItem?
     private var navigationStyleItems: [CameraNavigationStyle: NSMenuItem] = [:]
     private var splatDebugItems: [SplatDebugOption: NSMenuItem] = [:]
+    private var splatBlendCapItems: [SplatBlendCapOption: NSMenuItem] = [:]
     private var splatWorkingSetItems: [EditorSplatWorkingSet: NSMenuItem] = [:]
     private var splatLevelModeItems: [SplatLevelModeOption: NSMenuItem] = [:]
     private var previewSplatTwinsItem: NSMenuItem?
@@ -179,6 +180,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let group = splatDebugGroup, group != option.group {
                 splatDebugMenu.addItem(.separator())
             }
+            if option.group == .paging, splatDebugGroup != .paging {
+                // The per-pixel blend cap leads the paging group's separator (radio items).
+                let blendCapItem = NSMenuItem(title: "Splat Blend Cap", action: nil, keyEquivalent: "")
+                let blendCapMenu = NSMenu(title: "Splat Blend Cap")
+                blendCapMenu.autoenablesItems = false
+                for choice in SplatBlendCapOption.allCases {
+                    let item = addItem(to: blendCapMenu, title: choice.title, action: #selector(menuSelectSplatBlendCap(_:)), key: "")
+                    item.representedObject = choice.rawValue
+                    item.toolTip = choice.summary
+                    splatBlendCapItems[choice] = item
+                }
+                blendCapItem.submenu = blendCapMenu
+                splatDebugMenu.addItem(blendCapItem)
+                splatDebugMenu.addItem(.separator())
+            }
             if option.group == .levels, splatDebugGroup != .levels {
                 // The level mode leads its group (radio-style checkmarks, synced in menuNeedsUpdate).
                 let levelModeItem = NSMenuItem(title: "Splat Level Mode", action: nil, keyEquivalent: "")
@@ -245,6 +261,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let levelMode = SplatLevelModeOption.current
         for (mode, item) in splatLevelModeItems {
             item.state = mode == levelMode ? .on : .off
+        }
+        let blendCap = SplatBlendCapOption.current
+        for (choice, item) in splatBlendCapItems {
+            item.state = choice == blendCap ? .on : .off
         }
         previewSplatTwinsItem?.state = GaussianTwinPreviewSettings.shared.isEnabled ? .on : .off
         let store = EditorEngineStatsStore.shared
@@ -346,6 +366,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         SplatLevelModeOption.current = mode
     }
 
+    @objc private func menuSelectSplatBlendCap(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let choice = SplatBlendCapOption(rawValue: raw) else {
+            return
+        }
+        SplatBlendCapOption.current = choice
+    }
+
     @objc private func menuToggleSplatDebug(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let option = SplatDebugOption(rawValue: raw) else {
             return
@@ -393,7 +420,6 @@ enum SplatDebugOption: String, CaseIterable {
     // The draw.
     case hzbOcclusionCull
     case opaqueDepthTest
-    case blendCap
     case antiAliasSplatPixels
     // Disk paging of a large .untoldgs (GaussianPageManager).
     case paging
@@ -417,7 +443,7 @@ enum SplatDebugOption: String, CaseIterable {
 
     var group: Group {
         switch self {
-        case .hzbOcclusionCull, .opaqueDepthTest, .blendCap, .antiAliasSplatPixels: .draw
+        case .hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels: .draw
         case .paging, .forcePaging, .freezePaging, .residencyTint: .paging
         case .levelCrossFade, .levelTint: .levels
         case .chunkCull, .workingSetBudget, .screenWeightedQuotas: .budget
@@ -428,7 +454,6 @@ enum SplatDebugOption: String, CaseIterable {
         switch self {
         case .hzbOcclusionCull: "Disable Splat HZB Occlusion Cull"
         case .opaqueDepthTest: "Disable Splat Opaque Depth Test"
-        case .blendCap: "Disable Splat Per-Pixel Blend Cap"
         case .antiAliasSplatPixels: "Anti-alias Splat Pixels"
         case .paging: "Disable Splat Paging"
         case .forcePaging: "Force Splat Paging"
@@ -446,7 +471,6 @@ enum SplatDebugOption: String, CaseIterable {
         switch self {
         case .hzbOcclusionCull: "Splats are no longer culled against the previous frame's depth pyramid."
         case .opaqueDepthTest: "Splat fragments are no longer hidden behind meshes, gizmos or the grid."
-        case .blendCap: "Every sorted splat that reaches a pixel is blended, not just the platform's cap (64 on mobile, 128 on a Mac)."
         case .antiAliasSplatPixels: "FXAA and SMAA filter splat pixels like everything else, blurring their fine structure: the behaviour before the passes kept splat pixels as the splat pass blended them, for an A/B."
         case .paging: "Every .untoldgs loads whole at its next load, whatever its size, instead of paging from disk through a pool: the pre-paging behaviour, for an A/B of what the pool costs and what its fill-in shows."
         case .forcePaging: "Every chunked .untoldgs pages from disk at its next load, whatever its size (the paging threshold is set to zero): a small capture then takes the paged path through a pool that holds it whole, so the fill-in, the residency tint and the demand-driven reads can be checked without a capture above the threshold. Disable Splat Paging wins when both are on."
@@ -466,7 +490,6 @@ enum SplatDebugOption: String, CaseIterable {
             return switch self {
             case .hzbOcclusionCull: options.disableHZBOcclusionCull
             case .opaqueDepthTest: options.disableOpaqueDepthTest
-            case .blendCap: options.disableBlendCap
             case .antiAliasSplatPixels: options.antiAliasSplatPixels
             case .paging: options.disablePaging
             case .forcePaging: GaussianPagingPolicy.pagingThresholdBytesOverride == 0
@@ -484,7 +507,6 @@ enum SplatDebugOption: String, CaseIterable {
             switch self {
             case .hzbOcclusionCull: options.disableHZBOcclusionCull = newValue
             case .opaqueDepthTest: options.disableOpaqueDepthTest = newValue
-            case .blendCap: options.disableBlendCap = newValue
             case .antiAliasSplatPixels: options.antiAliasSplatPixels = newValue
             case .paging: options.disablePaging = newValue
             case .forcePaging: GaussianPagingPolicy.pagingThresholdBytesOverride = newValue ? 0 : nil
@@ -496,6 +518,54 @@ enum SplatDebugOption: String, CaseIterable {
             case .workingSetBudget: options.disableWorkingSetBudget = newValue
             case .screenWeightedQuotas: options.disableScreenWeightedQuotas = newValue
             }
+        }
+    }
+}
+
+/// The splat fragment shader's per-pixel blend cap (`GaussianRuntimeLimits.maxBlendedSplatsPerPixel`)
+/// as the View > Splat Debug > Splat Blend Cap radio items: the mobile figure, the Mac figure
+/// and no cap, for an A/B of what the cap clips on a capture whose splats are mostly faint.
+enum SplatBlendCapOption: String, CaseIterable {
+    case mobile
+    case mac
+    case unlimited
+
+    /// The override to install; nil restores the platform figure.
+    var splats: Int? {
+        switch self {
+        case .mobile: GaussianRuntimeLimits.maxBlendedSplatsPerPixelMobile
+        case .mac: GaussianRuntimeLimits.maxBlendedSplatsPerPixelMac
+        case .unlimited: 255
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .mobile: "\(GaussianRuntimeLimits.maxBlendedSplatsPerPixelMobile) (Mobile Default)"
+        case .mac: "\(GaussianRuntimeLimits.maxBlendedSplatsPerPixelMac) (Mac Default)"
+        case .unlimited: "Unlimited"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .mobile: "The cap every platform had until 2026-09: a capture whose splats are mostly faint (a median opacity near 0.1 needs about 65 splats to saturate a pixel) is clipped."
+        case .mac: "The Mac's cap: twice the mobile bound, enough for a faint capture; a capture that saturates early pays nothing more."
+        case .unlimited: "Every sorted splat that reaches a pixel is blended (the shader counter's maximum, 255): the ground truth the caps approximate, at the cost of the longest blend chains."
+        }
+    }
+
+    /// The choice in effect, read from the limit: the platform figure is the platform's
+    /// choice, 255 is unlimited, any other override shows as the nearest.
+    static var current: SplatBlendCapOption {
+        get {
+            let cap = GaussianRuntimeLimits.maxBlendedSplatsPerPixel
+            if cap >= 255 { return .unlimited }
+            return abs(cap - GaussianRuntimeLimits.maxBlendedSplatsPerPixelMobile) < abs(cap - GaussianRuntimeLimits.maxBlendedSplatsPerPixelMac) ? .mobile : .mac
+        }
+        set {
+            GaussianDebugOptions.shared.disableBlendCap = false
+            GaussianRuntimeLimits.maxBlendedSplatsPerPixelOverride = newValue.splats
         }
     }
 }
