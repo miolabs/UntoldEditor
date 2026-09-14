@@ -14,14 +14,24 @@
 //  times, working set, pool, quotas, levels and paging counters), then repeats the poses with
 //  paging and the coarse levels off for an A/B. `UNTOLD_EDITOR_LARGE_CAPTURE_OUTPUT=<dir>`
 //  keeps the temporary project (and the cooked file) there instead of the temp folder.
+//  `UNTOLD_EDITOR_LARGE_CAPTURE_FRAMES=<dir>` writes every pose's last frame there as PNGs
+//  (the scene composite and the Gaussian pass alone, per variant), and
+//  `UNTOLD_EDITOR_LARGE_CAPTURE_FORCE_PAGING=1` zeroes the paging threshold for the run, as
+//  View > Splat Debug > Force Splat Paging does, so a small capture takes the paged path.
+//  `UNTOLD_EDITOR_LARGE_CAPTURE_FOCUS=x,y,z,radius` frames the poses on that sphere (asset
+//  space) instead of the asset's bounding box, whose centre and radius a capture's far
+//  background floaters usually dominate.
 //
 
+import CoreGraphics
 import CShaderTypes
 import Darwin
+import ImageIO
 import Metal
 import simd
 @testable import UntoldEditor
 @testable import UntoldEngine
+import UniformTypeIdentifiers
 import UntoldGaussianTwins
 import XCTest
 
@@ -29,6 +39,9 @@ import XCTest
 final class GaussianLargeCaptureTests: XCTestCase {
     static let captureEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE"
     static let outputEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_OUTPUT"
+    static let framesEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FRAMES"
+    static let forcePagingEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FORCE_PAGING"
+    static let focusEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FOCUS"
 
     private let viewportWidth = 1920
     private let viewportHeight = 1080
@@ -52,6 +65,11 @@ final class GaussianLargeCaptureTests: XCTestCase {
     private var savedLogLevel = Logger.logLevel
     private var savedGaussianLog = false
     private var report: [String] = []
+    /// Where the poses' last frames go as PNGs (`UNTOLD_EDITOR_LARGE_CAPTURE_FRAMES`); nil writes none.
+    private var frameDirectory: URL?
+    /// The variant the frame being rendered belongs to, for the PNG's name.
+    private var variantTag = ""
+    private var savedThresholdOverride: Int?
 
     // MARK: - Set-up
 
@@ -96,6 +114,15 @@ final class GaussianLargeCaptureTests: XCTestCase {
         }
         projectURL = outputRoot.appendingPathComponent("GaussianLargeCaptureTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: gaussiansFolder, withIntermediateDirectories: true)
+        if let frames = environment[Self.framesEnvironmentKey], !frames.isEmpty {
+            let directory = URL(fileURLWithPath: frames, isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            frameDirectory = directory
+        }
+        savedThresholdOverride = GaussianPagingPolicy.pagingThresholdBytesOverride
+        if environment[Self.forcePagingEnvironmentKey] == "1" {
+            GaussianPagingPolicy.pagingThresholdBytesOverride = 0
+        }
 
         // The splat-twin preview as the editor owns it, on an isolated defaults suite so the
         // user's View > Preview Splat Twins preference is untouched; `.live` installs the real
@@ -138,6 +165,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
         far = savedFar
         GaussianDebugOptions.shared.disablePaging = savedDisablePaging
         GaussianDebugOptions.shared.gaussianLevelMode = savedLevelMode
+        GaussianPagingPolicy.pagingThresholdBytesOverride = savedThresholdOverride
         Logger.logLevel = savedLogLevel
         Logger.set(category: .gaussian, enabled: savedGaussianLog)
         if let projectURL, !keepProject {
@@ -515,6 +543,85 @@ final class GaussianLargeCaptureTests: XCTestCase {
         return frames
     }
 
+    // MARK: - Frame dump (UNTOLD_EDITOR_LARGE_CAPTURE_FRAMES)
+
+    /// Writes the pose's last frame as PNGs named `<pose>-<variant>-<target>.png`: the scene
+    /// composite (what the viewport shows before the UI) and the Gaussian pass alone on black.
+    private func dumpFrame(pose: String) {
+        guard let frameDirectory else { return }
+        let tag = variantTag.replacingOccurrences(of: "[^A-Za-z0-9]+", with: "_", options: .regularExpression)
+        let targets: [(String, MTLTexture?)] = [
+            ("composite", textureResources.sceneCompositeTexture),
+            ("gaussian", textureResources.gaussianColorMap),
+        ]
+        for (kind, texture) in targets {
+            guard let texture, let image = Self.cgImage(from: texture) else {
+                note("frame: \(kind) not written (format \(texture.map { String(describing: $0.pixelFormat) } ?? "no texture"))")
+                continue
+            }
+            let url = frameDirectory.appendingPathComponent("\(pose)-\(tag)-\(kind).png")
+            guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { continue }
+            CGImageDestinationAddImage(destination, image, nil)
+            if CGImageDestinationFinalize(destination) {
+                note("frame: \(url.path)")
+            }
+        }
+    }
+
+    /// A CPU copy of `texture` as opaque 8-bit RGB: 8-bit formats as stored, float formats
+    /// clamped to [0, 1]. Blits through a shared texture, so a private render target works.
+    private static func cgImage(from texture: MTLTexture) -> CGImage? {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: texture.pixelFormat, width: texture.width, height: texture.height, mipmapped: false)
+        descriptor.storageMode = .shared
+        descriptor.usage = [.shaderRead]
+        guard let copy = texture.device.makeTexture(descriptor: descriptor),
+              let queue = texture.device.makeCommandQueue(),
+              let commandBuffer = queue.makeCommandBuffer(),
+              let blit = commandBuffer.makeBlitCommandEncoder()
+        else { return nil }
+        blit.copy(from: texture, to: copy)
+        blit.endEncoding()
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        let width = texture.width, height = texture.height, pixels = width * height
+        let region = MTLRegionMake2D(0, 0, width, height)
+        var rgba = [UInt8](repeating: 255, count: pixels * 4)
+        switch texture.pixelFormat {
+        case .bgra8Unorm, .bgra8Unorm_srgb:
+            var raw = [UInt8](repeating: 0, count: pixels * 4)
+            copy.getBytes(&raw, bytesPerRow: width * 4, from: region, mipmapLevel: 0)
+            for i in 0 ..< pixels {
+                rgba[i * 4] = raw[i * 4 + 2]
+                rgba[i * 4 + 1] = raw[i * 4 + 1]
+                rgba[i * 4 + 2] = raw[i * 4]
+            }
+        case .rgba8Unorm, .rgba8Unorm_srgb:
+            copy.getBytes(&rgba, bytesPerRow: width * 4, from: region, mipmapLevel: 0)
+            for i in 0 ..< pixels { rgba[i * 4 + 3] = 255 }
+        case .rgba16Float:
+            var raw = [Float16](repeating: 0, count: pixels * 4)
+            copy.getBytes(&raw, bytesPerRow: width * 8, from: region, mipmapLevel: 0)
+            for i in 0 ..< pixels * 4 {
+                rgba[i] = i % 4 == 3 ? 255 : UInt8(max(0, min(255, (Float(raw[i]) * 255).rounded())))
+            }
+        case .rgba32Float:
+            var raw = [Float](repeating: 0, count: pixels * 4)
+            copy.getBytes(&raw, bytesPerRow: width * 16, from: region, mipmapLevel: 0)
+            for i in 0 ..< pixels * 4 {
+                rgba[i] = i % 4 == 3 ? 255 : UInt8(max(0, min(255, (raw[i] * 255).rounded())))
+            }
+        default:
+            return nil
+        }
+        guard let provider = CGDataProvider(data: Data(rgba) as CFData) else { return nil }
+        return CGImage(
+            width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+        )
+    }
+
     private func renderPose(name: String, frames: Int, eye: (Int) -> simd_float3, target: simd_float3, bounds: (min: simd_float3, max: simd_float3), settled: Int? = nil) throws -> PoseSummary {
         let component = try XCTUnwrap(scene.get(component: GaussianComponent.self, for: entity))
         var samples: [FrameSample] = []
@@ -533,6 +640,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
             if isLast {
                 Logger.set(category: .gaussian, enabled: savedGaussianLog)
                 Logger.logLevel = savedLogLevel
+                dumpFrame(pose: name)
             }
             assertFrameInvariants(sample, pose: name, frame: frame)
             if let pager = sample.pager {
@@ -577,8 +685,16 @@ final class GaussianLargeCaptureTests: XCTestCase {
     /// runs whole per variant.
     private func runPoseSuites(bounds: (min: simd_float3, max: simd_float3), framesPerPose: Int, orbitFrames: Int, variants: [(label: String, apply: () -> Void)]) throws -> [PoseSuite] {
         let component = try XCTUnwrap(scene.get(component: GaussianComponent.self, for: entity))
-        let centre = (bounds.min + bounds.max) / 2
-        let radius = max(simd_length(bounds.max - bounds.min) / 2, 0.01)
+        var centre = (bounds.min + bounds.max) / 2
+        var radius = max(simd_length(bounds.max - bounds.min) / 2, 0.01)
+        if let focus = ProcessInfo.processInfo.environment[Self.focusEnvironmentKey] {
+            let parts = focus.split(separator: ",").compactMap { Float($0.trimmingCharacters(in: .whitespaces)) }
+            if parts.count == 4, parts[3] > 0 {
+                centre = simd_float3(parts[0], parts[1], parts[2])
+                radius = parts[3]
+                note("focus: centre \(centre) radius \(radius) (bounds centre \((bounds.min + bounds.max) / 2), radius \(simd_length(bounds.max - bounds.min) / 2))")
+            }
+        }
         let direction = poseDirection()
         var poses: [[PoseSummary]] = Array(repeating: [], count: variants.count)
         for (name, distance) in [("near", 0.15), ("mid", 1.0), ("far", 2.2)] as [(String, Float)] {
@@ -587,6 +703,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
             let settled = try settlePager(component: component)
             for (index, variant) in variants.enumerated() {
                 variant.apply()
+                variantTag = variant.label
                 note("-- \(name), \(variant.label) --")
                 try poses[index].append(renderPose(name: name, frames: framesPerPose, eye: { _ in eye }, target: centre, bounds: bounds, settled: component.pager != nil ? settled : nil))
             }
@@ -594,6 +711,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
         let orbitHeight = centre.y + radius * 0.3
         for (index, variant) in variants.enumerated() {
             variant.apply()
+            variantTag = variant.label
             note("-- orbit, \(variant.label) --")
             try poses[index].append(renderPose(name: "orbit", frames: orbitFrames, eye: { frame in
                 let angle = Float(frame) / Float(max(1, orbitFrames)) * 2 * .pi
