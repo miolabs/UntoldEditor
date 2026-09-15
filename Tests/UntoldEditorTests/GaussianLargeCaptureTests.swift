@@ -18,6 +18,8 @@
 //  (the scene composite and the Gaussian pass alone, per variant), and
 //  `UNTOLD_EDITOR_LARGE_CAPTURE_FORCE_PAGING=1` zeroes the paging threshold for the run, as
 //  View > Splat Debug > Force Splat Paging does, so a small capture takes the paged path.
+//  `UNTOLD_EDITOR_LARGE_CAPTURE_UP_AXIS=y|z|-y` cooks a `.ply` with that up axis, as the sheet's
+//  picker would (an iPhone capture is Y down).
 //  `UNTOLD_EDITOR_LARGE_CAPTURE_FOCUS=x,y,z,radius` frames the poses on that sphere (asset
 //  space) instead of the asset's bounding box, whose centre and radius a capture's far
 //  background floaters usually dominate. `UNTOLD_EDITOR_LARGE_CAPTURE_DEBUG=a,b,...` applies
@@ -48,6 +50,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
     static let framesEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FRAMES"
     static let forcePagingEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FORCE_PAGING"
     static let focusEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_FOCUS"
+    static let upAxisEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_UP_AXIS"
     static let debugEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_DEBUG"
     static let antiAliasingEnvironmentKey = "UNTOLD_EDITOR_LARGE_CAPTURE_AA"
 
@@ -356,7 +359,17 @@ final class GaussianLargeCaptureTests: XCTestCase {
     /// The cook sheet's defaults through `cookGaussianPLY`, timed, with the process footprint
     /// before and the lifetime peak after.
     private func cook(ply: URL, packageFolder: URL) throws -> URL {
-        let settings = GaussianCookSettings()
+        var settings = GaussianCookSettings()
+        // `UNTOLD_EDITOR_LARGE_CAPTURE_UP_AXIS=y|z|-y` cooks a capture whose up axis is not the
+        // engine's (an iPhone capture is Y down) the way the sheet's picker would.
+        if let axis = ProcessInfo.processInfo.environment[Self.upAxisEnvironmentKey] {
+            switch axis.lowercased() {
+            case "-y": settings.upAxis = .negativeY
+            case "z": settings.upAxis = .z
+            default: settings.upAxis = .y
+            }
+            note("cook: up axis \(settings.upAxis.rawValue)")
+        }
         let sourceCount = try PLYReader.readGaussianSplatCount(from: ply)
         let before = Self.footprint()
         let start = CACurrentMediaTime()
