@@ -94,7 +94,7 @@ final class SplatDebugMenuTests: XCTestCase {
         }
         let groups = SplatDebugOption.allCases.map(\.group.rawValue)
         XCTAssertEqual(groups, groups.sorted(), "the groups are contiguous in menu order")
-        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .draw }, [.hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels, .toneMapSplatPixels])
+        XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .draw }, [.hzbOcclusionCull, .opaqueDepthTest, .antiAliasSplatPixels, .toneMapSplatPixels, .crispSplatKernel])
         XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .paging }, [.paging, .forcePaging, .freezePaging, .residencyTint])
         XCTAssertEqual(SplatDebugOption.allCases.filter { $0.group == .levels }, [.levelCrossFade, .levelTint])
         XCTAssertEqual(SplatDebugOption.paging.title, "Disable Splat Paging")

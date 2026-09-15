@@ -25,7 +25,8 @@
 //  background floaters usually dominate. `UNTOLD_EDITOR_LARGE_CAPTURE_DEBUG=a,b,...` applies
 //  engine debug switches to the main variants (`disableBlendCap`, `disableWorkingSetBudget`,
 //  `disableChunkCull`, `disableScreenWeightedQuotas`, `disableOpaqueDepthTest`,
-//  `disableHZBOcclusionCull`, `antiAliasSplatPixels`, `fineOnly`, `workingSet=<splats>`) for an A/B against a run
+//  `disableHZBOcclusionCull`, `antiAliasSplatPixels`, `toneMapSplatPixels`, `crispSplatKernel`, `fineOnly`,
+//  `workingSet=<splats>`) for an A/B against a run
 //  without them. `UNTOLD_EDITOR_LARGE_CAPTURE_AA=none|fxaa|smaa` sets the engine's
 //  anti-aliasing mode for the run; the frame dump then also writes the presented drawable
 //  (`-final.png`), the frame after the look and anti-aliasing passes.
@@ -603,6 +604,8 @@ final class GaussianLargeCaptureTests: XCTestCase {
             "disableOpaqueDepthTest": \.disableOpaqueDepthTest,
             "disableHZBOcclusionCull": \.disableHZBOcclusionCull,
             "antiAliasSplatPixels": \.antiAliasSplatPixels,
+            "toneMapSplatPixels": \.toneMapSplatPixels,
+            "crispSplatKernel": \.crispSplatKernel,
         ]
         for item in list.split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }) where !item.isEmpty {
             if let keyPath = flags[item] {
