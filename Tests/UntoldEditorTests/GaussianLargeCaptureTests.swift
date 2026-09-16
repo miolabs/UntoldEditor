@@ -5,7 +5,8 @@
 //  The editor's plain-Gaussian path end to end, headless: a `.ply` imported into a temporary
 //  project's Gaussians folder, cooked through the cook sheet's defaults (`cookGaussianPLY`),
 //  placed through `loadEditorGaussianAuto` (the call a drop or double-click makes) and rendered
-//  with the editor's renderer at 1920×1080 from three poses and an orbit.
+//  with the editor's renderer at 1920×1080 from three poses and an orbit, with the splat-twin
+//  preview on and off — a plain entity must draw the same either way.
 //
 //  The 200-splat fixture always runs. `UNTOLD_EDITOR_LARGE_CAPTURE=<path to .ply or .untoldgs>`
 //  runs the same steps on a real capture, prints a `[LargeCapture]` report block (cook wall
@@ -40,6 +41,7 @@ import simd
 import UniformTypeIdentifiers
 @testable import UntoldEditor
 @testable import UntoldEngine
+import UntoldGaussianTwins
 import XCTest
 
 @MainActor
@@ -61,8 +63,9 @@ final class GaussianLargeCaptureTests: XCTestCase {
     private var keepProject = false
     private var cameraEntity: EntityID = .invalid
     private var entity: EntityID = .invalid
-    private var settingsDefaults: UserDefaults!
-    private var settingsSuiteName = ""
+    private var twinDefaults: UserDefaults!
+    private var twinSuiteName = ""
+    private var twinPreview: GaussianTwinPreviewSettings?
     private var runtimeSettings: EditorGaussianRuntimeSettings?
     private var savedWorkingSetOverride: Int?
 
@@ -137,13 +140,16 @@ final class GaussianLargeCaptureTests: XCTestCase {
             GaussianPagingPolicy.pagingThresholdBytesOverride = 0
         }
 
+        // The splat-twin preview as the editor owns it, on an isolated defaults suite so the
+        // user's View > Preview Splat Twins preference is untouched; `.live` installs the real
+        // GaussianTwinSystem.
+        twinSuiteName = "GaussianLargeCaptureTests-\(UUID().uuidString)"
+        twinDefaults = try XCTUnwrap(UserDefaults(suiteName: twinSuiteName))
+        twinPreview = GaussianTwinPreviewSettings(defaults: twinDefaults, installer: .live)
         // The editor's runtime policy as EditorView installs it (View > Splat Debug > Working
-        // Set, the editor default), on an isolated defaults suite so the user's preference is
-        // untouched.
-        settingsSuiteName = "GaussianLargeCaptureTests-\(UUID().uuidString)"
-        settingsDefaults = try XCTUnwrap(UserDefaults(suiteName: settingsSuiteName))
+        // Set, the editor default), on the same isolated suite.
         savedWorkingSetOverride = GaussianRuntimeLimits.workingSetSplatsOverride
-        let runtimeSettings = EditorGaussianRuntimeSettings(defaults: settingsDefaults)
+        let runtimeSettings = EditorGaussianRuntimeSettings(defaults: twinDefaults)
         runtimeSettings.activate()
         self.runtimeSettings = runtimeSettings
         if let debug = environment[Self.debugEnvironmentKey], !debug.isEmpty {
@@ -171,13 +177,16 @@ final class GaussianLargeCaptureTests: XCTestCase {
         }
         CameraSystem.shared.activeCamera = nil
         EditorGaussianAssetState.shared.clear()
+        twinPreview?.isEnabled = false
+        GaussianTwinSystem.shared.uninstall()
+        twinPreview = nil
         runtimeSettings?.deactivate()
         runtimeSettings = nil
         GaussianRuntimeLimits.workingSetSplatsOverride = savedWorkingSetOverride
-        if let settingsDefaults {
-            settingsDefaults.removePersistentDomain(forName: settingsSuiteName)
+        if let twinDefaults {
+            twinDefaults.removePersistentDomain(forName: twinSuiteName)
         }
-        settingsDefaults = nil
+        twinDefaults = nil
         RenderExtensionRegistry.shared.unregister(id: EditorRenderExtension.shared.id)
         renderer = nil
         fov = savedFov
@@ -207,7 +216,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
     // MARK: - Tests
 
     /// The always-on variant: the 200-splat fixture through import, cook, placement and a short
-    /// render from every pose.
+    /// render from every pose with the twin preview on and off.
     func test_fixtureCooksPlacesAndRendersThroughTheEditorPath() async throws {
         let source = projectURL.appendingPathComponent("chair.ply")
         try Self.makeFixturePLY(splatCount: 200).write(to: source)
@@ -253,6 +262,7 @@ final class GaussianLargeCaptureTests: XCTestCase {
         // A/B: the same poses with every record resident and the fine records only.
         GaussianDebugOptions.shared.disablePaging = true
         GaussianDebugOptions.shared.gaussianLevelMode = .fineOnly
+        twinPreview?.isEnabled = false
         removeEntityGaussian(entityId: entity)
         let abPlacement = try await place(asset: outcome.assetURL)
         note("A/B placement (disablePaging=true, levelMode=fineOnly): load \(ms(abPlacement.loadSeconds)) firstFrame \(ms(abPlacement.firstFrameSeconds)) path=\(abPlacement.path.description)")
@@ -329,13 +339,22 @@ final class GaussianLargeCaptureTests: XCTestCase {
         note("placement: load \(ms(placement.loadSeconds)) (main thread free) firstFrame \(ms(placement.firstFrameSeconds)) bounds=\(placement.bounds.min) … \(placement.bounds.max)")
         note("path: \(placement.path.description)")
 
-        // (d) Render from every pose on the editor's default path.
+        // (d) Render with the twin preview on, then off.
+        let preview = try XCTUnwrap(twinPreview)
+        preview.activate()
+        preview.isEnabled = true
+        XCTAssertNil(scene.get(component: GaussianTwinComponent.self, for: entity), "a plain entity never gets a twin")
         let suites = try runPoseSuites(bounds: placement.bounds, framesPerPose: framesPerPose, orbitFrames: orbitFrames, variants: [
-            (label: "editor default", apply: {}),
+            (label: "twins preview on", apply: { preview.isEnabled = true }),
+            (label: "twins preview off", apply: { preview.isEnabled = false }),
         ])
-        XCTAssertEqual(scene.get(component: GaussianComponent.self, for: entity)?.opacityScale, 1, "a plain entity keeps its opacity")
+        let withTwins = suites[0]
+        let withoutTwins = suites[1]
+        assertSuitesMatch(withTwins, withoutTwins, paged: placement.path.isPaged)
+        XCTAssertNil(scene.get(component: GaussianTwinComponent.self, for: entity))
+        XCTAssertEqual(scene.get(component: GaussianComponent.self, for: entity)?.opacityScale, 1, "the preview leaves a plain entity's opacity alone")
 
-        return CaptureOutcome(assetURL: assetURL, header: header, path: placement.path, suites: suites)
+        return CaptureOutcome(assetURL: assetURL, header: header, path: placement.path, suites: [withTwins, withoutTwins])
     }
 
     /// The cook sheet's defaults through `cookGaussianPLY`, timed, with the process footprint
@@ -811,6 +830,19 @@ final class GaussianLargeCaptureTests: XCTestCase {
             }, target: centre, bounds: bounds))
         }
         return variants.enumerated().map { PoseSuite(label: $0.element.label, poses: poses[$0.offset]) }
+    }
+
+    /// A plain entity draws the same with the preview on and off: the same visible splats and
+    /// grant at every static pose (exactly for a whole-resident entity; a paged one measures the
+    /// same settled residency both ways but its level cross-fades and the budget hysteresis may
+    /// still differ by a frame, so within 2 %).
+    private func assertSuitesMatch(_ a: PoseSuite, _ b: PoseSuite, paged: Bool) {
+        for (x, y) in zip(a.poses, b.poses) where x.name != "orbit" {
+            let tolerance = paged ? max(1, Int(Double(x.last.visibleCount) * 0.02)) : 0
+            XCTAssertLessThanOrEqual(abs(x.last.visibleCount - y.last.visibleCount), tolerance, "\(x.name): the preview changes nothing for a plain entity (visible \(x.last.visibleCount) vs \(y.last.visibleCount))")
+            XCTAssertLessThanOrEqual(abs(Int(x.last.state.quotaSplats) - Int(y.last.state.quotaSplats)), tolerance, "\(x.name): the preview changes nothing for a plain entity (quota \(x.last.state.quotaSplats) vs \(y.last.state.quotaSplats))")
+            XCTAssertEqual(x.last.state.reservedSplats, y.last.state.reservedSplats, "\(x.name): no whole-buffer reservation either way")
+        }
     }
 
     // MARK: - Report
