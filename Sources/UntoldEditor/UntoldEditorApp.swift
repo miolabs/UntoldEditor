@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var window: NSWindow!
 
     private let appName = "Untold Engine Editor"
-    static let editorVersion = "0.19.0"
+    static let editorVersion = "0.19.1"
 
     private var projectTitleSubscription: AnyCancellable?
 
@@ -198,7 +198,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// Keep the View-menu checkmarks in sync with the current overlay / camera state.
-    func menuNeedsUpdate(_: NSMenu) {
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        // Items that loaded editor extensions added to this menu sync their own state.
+        EditorMenuHost.shared.menuNeedsUpdate(menu)
+
         for (option, item) in splatDebugItems {
             item.state = option.isEnabled ? .on : .off
         }

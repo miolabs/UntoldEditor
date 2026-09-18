@@ -27,6 +27,7 @@ let package = Package(
             dependencies: [
                 .product(name: "UntoldEngine", package: "UntoldEngine"),
                 .product(name: "UntoldGaussianTwins", package: "UntoldGaussianTwins"),
+                .product(name: "UntoldComponentKit", package: "UntoldEngine"),
             ],
             path: "Sources/UntoldEditor",
             resources: [
@@ -46,7 +47,10 @@ let package = Package(
         // ✅ Add this new test target
         .testTarget(
             name: "UntoldEditorTests",
-            dependencies: ["UntoldEditor"],
+            dependencies: [
+                "UntoldEditor",
+                .product(name: "UntoldComponentKit", package: "UntoldEngine"),
+            ],
             path: "Tests/UntoldEditorTests",
             resources: [
             ],
