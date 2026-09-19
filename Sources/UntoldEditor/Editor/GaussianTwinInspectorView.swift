@@ -19,6 +19,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import UntoldEngine
+import UntoldGaussianTwins
 
 /// An open panel limited to cooked `.untoldgs` payloads.
 private func pickGaussianPayloadFile() -> URL? {
@@ -36,7 +37,9 @@ private func pickGaussianPayloadFile() -> URL? {
 /// identified by the entity so a new selection gets a fresh model.
 struct GaussianTwinInspectorView: View {
     @StateObject private var model: GaussianTwinInspectorModel
-    @ObservedObject private var preview = GaussianTwinPreviewSettings.shared
+    /// Whether the twin system runs in the viewport (View > Preview Splat Twins, an item of
+    /// the UntoldGaussianTwins plugin package); refreshed when a plugin menu value changes.
+    @State private var previewOn = GaussianTwinSystem.shared.isInstalled
     /// Observed so the Align Mode checkbox (`model.isAlignMode` reads it) follows a mode ended
     /// elsewhere: scene reset, preview off, the link undone away.
     @ObservedObject private var alignMode = GaussianTwinAlignMode.shared
@@ -130,12 +133,12 @@ struct GaussianTwinInspectorView: View {
             }
 
             if model.link != nil {
-                if preview.isEnabled {
+                if previewOn {
                     Text("Preview: \(liveState ?? "waiting for the twin system")")
                         .font(.caption)
                         .foregroundColor(.editorInfo)
                 } else {
-                    Text("Preview off (View > Preview Splat Twins)")
+                    Text("Preview off (View > Preview Splat Twins, from the UntoldGaussianTwins plugin package)")
                         .font(.caption)
                         .foregroundColor(.editorTextTertiary)
                 }
@@ -144,8 +147,12 @@ struct GaussianTwinInspectorView: View {
         .padding(8)
         .background(Color.editorFillSubtle)
         .cornerRadius(8)
+        .onReceive(EditorMenuPluginHost.shared.valuesDidChange) {
+            previewOn = GaussianTwinSystem.shared.isInstalled
+        }
         .onReceive(stateTimer) { _ in
-            guard preview.isEnabled, model.link != nil else { return }
+            previewOn = GaussianTwinSystem.shared.isInstalled
+            guard previewOn, model.link != nil else { return }
             liveState = model.liveTwinDescription()
         }
         .onDisappear {
@@ -207,7 +214,7 @@ struct GaussianTwinInspectorView: View {
                     }
                 ))
                 .toggleStyle(.checkbox)
-                .disabled(model.link == nil || !preview.isEnabled)
+                .disabled(model.link == nil || !previewOn)
                 .help("Show the splat over the mesh at any distance, occluder shells off, while the alignment is tuned. Not saved.")
             }
             .controlSize(.small)

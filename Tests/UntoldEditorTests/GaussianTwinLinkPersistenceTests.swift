@@ -25,7 +25,7 @@ final class GaussianTwinLinkPersistenceTests: XCTestCase {
     }
 
     override func tearDown() {
-        GaussianTwinLinkPersistence.previewEnabled = { GaussianTwinPreviewSettings.shared.isEnabled }
+        GaussianTwinLinkPersistence.previewEnabled = { GaussianTwinSystem.shared.isInstalled }
         if let directory {
             try? FileManager.default.removeItem(at: directory)
         }

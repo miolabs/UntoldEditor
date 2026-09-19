@@ -38,7 +38,7 @@ final class GaussianTwinInspectorModelTests: XCTestCase {
     }
 
     override func tearDown() {
-        GaussianTwinLinkPersistence.previewEnabled = { GaussianTwinPreviewSettings.shared.isEnabled }
+        GaussianTwinLinkPersistence.previewEnabled = { GaussianTwinSystem.shared.isInstalled }
         if let directory {
             // A test may have locked the asset folder to make a write fail.
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)

@@ -156,8 +156,6 @@ public struct EditorView: View {
         // Extensions that create pipelines must be registered after the renderer
         // has initialized Metal and loaded the engine shader library.
         registerEditorRenderExtension()
-        // Splat twin swaps preview in the viewport (View > Preview Splat Twins, on by default).
-        GaussianTwinPreviewSettings.shared.activate()
         // Compiles and loads the open project's code components and editor extensions.
         ComponentLibraryController.shared.activate()
 
@@ -1513,7 +1511,9 @@ public struct EditorView: View {
             EditorComponentsState.shared.clear()
             EditorGaussianAssetState.shared.clear()
             EditorUndoManager.shared.clear()
-            GaussianTwinPreviewSettings.shared.sceneDidReset()
+            // The old scene's entities are gone: an align mode on them ends, and the twins
+            // plugin (when loaded) starts its link adoption over in onSceneReset.
+            GaussianTwinAlignMode.shared.leave()
             EditorMenuPluginHost.shared.sceneDidReset()
             EditorSceneDirtyState.shared.clear()
             sceneAuthoredGameCamera = nil
@@ -1544,7 +1544,7 @@ public struct EditorView: View {
         EditorComponentsState.shared.clear()
         EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
-        GaussianTwinPreviewSettings.shared.sceneDidReset()
+        GaussianTwinAlignMode.shared.leave()
         EditorMenuPluginHost.shared.sceneDidReset()
         EditorSceneDirtyState.shared.clear()
         sceneAuthoredGameCamera = nil
@@ -1648,7 +1648,7 @@ public struct EditorView: View {
         EditorComponentsState.shared.clear()
         EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
-        GaussianTwinPreviewSettings.shared.sceneDidReset()
+        GaussianTwinAlignMode.shared.leave()
         EditorMenuPluginHost.shared.sceneDidReset()
         sceneAuthoredGameCamera = nil
 

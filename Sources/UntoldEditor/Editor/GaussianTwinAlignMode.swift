@@ -13,6 +13,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
 
+import Combine
 import Foundation
 import UntoldEngine
 import UntoldGaussianTwins
@@ -38,6 +39,17 @@ final class GaussianTwinAlignMode: ObservableObject {
     private(set) var owner: ObjectIdentifier?
     /// `GaussianDebugOptions.disableOccluderShell` as found on entering, put back on leaving.
     private var restoredDisableOccluderShell = false
+    private var previewSubscription: AnyCancellable?
+
+    init() {
+        // Nothing swaps without the twin system: when a plugin menu change leaves it uninstalled
+        // (View > Preview Splat Twins off, the twins plugin unloaded), a mode would only keep the
+        // shells off.
+        previewSubscription = EditorMenuPluginHost.shared.valuesDidChange.sink { [weak self] in
+            guard GaussianTwinSystem.shared.isInstalled == false else { return }
+            self?.leave()
+        }
+    }
 
     var isActive: Bool {
         owner != nil

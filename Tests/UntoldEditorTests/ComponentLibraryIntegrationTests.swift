@@ -13,6 +13,7 @@ import Foundation
 import UntoldComponentKit
 @testable import UntoldEditor
 @testable import UntoldEngine
+import UntoldGaussianTwins
 import XCTest
 
 /// Runs the editor's real pipeline end to end inside the test process: locate the SDK of this
@@ -173,6 +174,92 @@ final class ComponentLibraryIntegrationTests: XCTestCase {
     """
 
     // MARK: Environment
+
+    /// The UntoldGaussianTwins package is a plugin package the editor links: its manifest names
+    /// `Sources/UntoldGaussianTwinsEditor`, which only the editor compiles, against the runtime
+    /// module this build provides. The loaded plugin declares the menus the editor used to hold
+    /// itself, and drives the process's one `GaussianTwinSystem`.
+    func test_theTwinsPackageEditorSourcesCompileAgainstTheLinkedRuntime() throws {
+        let environment = try Environment.locate(for: Self.self)
+        guard environment.sdk.providedModules.contains("UntoldGaussianTwins") else {
+            throw XCTSkip("this build's SDK does not provide UntoldGaussianTwins")
+        }
+        let checkout = try Self.twinsCheckout(near: environment.sdk.modulesDirectory)
+        let scratch = try ScratchDirectory("TwinsEditorSources")
+        let basePath = try scratch.directory("Twin/Sources/Twin/GameData")
+        _ = try scratch.directory("Twin/Sources/TwinPlugins")
+        _ = try scratch.directory("Twins/Sources")
+        try scratch.write(#"{ "pluginPackages": [ { "path": "../Twins" } ] }"#, to: "Twin/UntoldEditor.json")
+        // Only what the editor compiles for a package it links: the manifest and the editor folder.
+        let fileManager = FileManager.default
+        try fileManager.copyItem(
+            at: checkout.appendingPathComponent("untold-package.json"),
+            to: scratch.url.appendingPathComponent("Twins/untold-package.json")
+        )
+        try fileManager.copyItem(
+            at: checkout.appendingPathComponent("Sources/UntoldGaussianTwinsEditor"),
+            to: scratch.url.appendingPathComponent("Twins/Sources/UntoldGaussianTwinsEditor")
+        )
+
+        let layout = ComponentSourceLocator.layout(forAssetBasePath: basePath, sdk: environment.sdk)
+        XCTAssertTrue(layout.units.contains { $0.role == .packageRuntime } == false, "the editor links the runtime, so it is not compiled")
+        let unit = try XCTUnwrap(layout.units.first { $0.role == .packageEditor }, "problems: \(layout.problems)")
+        XCTAssertEqual(unit.moduleBaseName, "UntoldGaussianTwinsEditor")
+        XCTAssertEqual(unit.sources.map(\.lastPathComponent), ["GaussianTwinsEditor.swift"])
+
+        Self.revision += 1
+        let request = ComponentCompileRequest(
+            unit: unit,
+            revision: Self.revision,
+            outputDirectory: scratch.url.appendingPathComponent("cache"),
+            sdk: environment.sdk,
+            toolchain: environment.toolchain
+        )
+        let result = ComponentCompiler.compile(request)
+        if result.succeeded == false, result.output.contains("compiled with") || result.output.contains("cannot be imported") {
+            throw XCTSkip("xcrun's swiftc differs from the compiler that built these tests:\n\(result.output)")
+        }
+        XCTAssertTrue(result.succeeded, "swiftc failed:\n\(result.output)")
+        let library = try ComponentLibraryLoader.load(request).get()
+        XCTAssertEqual(library.menuPluginNames, ["GaussianTwinsEditor"])
+        XCTAssertEqual(library.componentNames, [])
+
+        let pluginType = try XCTUnwrap(EditorMenuPluginRegistry.shared.type(named: "GaussianTwinsEditor"))
+        let plugin = pluginType.init()
+        XCTAssertEqual(plugin.untoldMenuItems().map(\.menu.identifier), [
+            "view/Preview Splat Twins",
+            "debug/Splat Debug/Disable Splat HZB Occlusion Cull",
+            "debug/Splat Debug/Disable Splat Opaque Depth Test",
+            "debug/Splat Debug/Disable Splat Per-Pixel Blend Cap",
+            "debug/Splat Debug/Reset Link Adoption",
+        ])
+        XCTAssertEqual(plugin.untoldMenuItems().map(\.menu.persists), [true, false, false, false, false], "debug switches do not follow the project into the next session")
+
+        // The plugin runs the twin system this process links: on by default, off when unloaded.
+        XCTAssertFalse(GaussianTwinSystem.shared.isInstalled)
+        plugin.onLoad()
+        XCTAssertTrue(GaussianTwinSystem.shared.isInstalled, "View > Preview Splat Twins is on by default")
+        plugin.onUnload()
+        XCTAssertFalse(GaussianTwinSystem.shared.isInstalled)
+    }
+
+    /// The package checkout this build resolved: beside SwiftPM's products (`.build/checkouts`)
+    /// or Xcode's (`SourcePackages/checkouts`).
+    private static func twinsCheckout(near modules: URL) throws -> URL {
+        var directory = modules
+        var candidates: [URL] = []
+        for _ in 0 ..< 6 {
+            directory = directory.deletingLastPathComponent()
+            candidates.append(directory.appendingPathComponent("checkouts/UntoldGaussianTwins"))
+            candidates.append(directory.appendingPathComponent("SourcePackages/checkouts/UntoldGaussianTwins"))
+        }
+        guard let checkout = candidates.first(where: {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("Sources/UntoldGaussianTwinsEditor").path)
+        }) else {
+            throw XCTSkip("no UntoldGaussianTwins checkout with editor sources near \(modules.path)")
+        }
+        return checkout
+    }
 
     private struct Environment {
         let sdk: ComponentSDK

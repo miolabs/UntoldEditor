@@ -9,6 +9,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
 
+import Combine
 import Foundation
 import UntoldComponentKit
 import UntoldEngine
@@ -27,6 +28,11 @@ final class EditorMenuPluginHost {
     private(set) var live: [LiveExtension] = []
     /// Declarations that were refused: empty paths and paths another item already owns.
     private(set) var issues: [String] = []
+
+    /// Fires after a menu value changed and its owner applied it, after `load` applied the
+    /// restored values, and after `unloadAll`: editor UI that mirrors what plugins drive (the
+    /// Splat Twin section's preview state) refreshes on it.
+    let valuesDidChange = PassthroughSubject<Void, Never>()
 
     var menuHost: EditorMenuHost
     var defaults: UserDefaults
@@ -48,6 +54,7 @@ final class EditorMenuPluginHost {
         menuHost.onValueChanged = { [weak self] owner, menu in
             self?.persist(menu)
             owner.menuDidChange(menu.domain, menu.pathComponents.joined(separator: "/"))
+            self?.valuesDidChange.send()
         }
 
         var claimed: Set<String> = []
@@ -81,6 +88,7 @@ final class EditorMenuPluginHost {
         for (owner, menu) in accepted where menu.menuValue != nil {
             owner.menuDidChange(menu.domain, menu.pathComponents.joined(separator: "/"))
         }
+        valuesDidChange.send()
     }
 
     func unloadAll() {
@@ -89,6 +97,7 @@ final class EditorMenuPluginHost {
         }
         live.removeAll()
         menuHost.removeAll()
+        valuesDidChange.send()
     }
 
     // MARK: Editor events

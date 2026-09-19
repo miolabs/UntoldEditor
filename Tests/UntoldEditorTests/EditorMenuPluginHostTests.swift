@@ -10,6 +10,7 @@
 //
 
 import AppKit
+import Combine
 import UntoldComponentKit
 @testable import UntoldEditor
 import XCTest
@@ -55,6 +56,24 @@ final class EditorMenuPluginHostTests: XCTestCase {
         ], "actions hold no state, so they are not announced")
         XCTAssertEqual(mainMenu.items.map(\.title), ["App", "File", "View", "Debug", "Tools"])
         XCTAssertEqual(host.live.first?.menuIdentifiers.count, 4)
+    }
+
+    func test_valuesDidChangeFiresAfterLoadAfterEachClickAndAfterUnload() throws {
+        var signals = 0
+        let subscription = host.valuesDidChange.sink { signals += 1 }
+        defer { subscription.cancel() }
+
+        host.load(typeNames: ["MenuProbeExtension"], projectKey: "project")
+        XCTAssertEqual(signals, 1, "once, after every restored value was applied")
+
+        let probe = try XCTUnwrap(probe)
+        let viewItem = try XCTUnwrap(mainMenu.items[2].submenu?.items.last)
+        menuHost.itemClicked(viewItem)
+        XCTAssertEqual(signals, 2)
+        XCTAssertEqual(probe.events.last, "changed:view/Preview Twins", "the owner heard the change before the signal")
+
+        host.unloadAll()
+        XCTAssertEqual(signals, 3)
     }
 
     func test_valuesArePersistedPerProjectAndRestoredOnTheNextLoad() throws {

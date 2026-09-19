@@ -75,9 +75,9 @@ extension Notification.Name {
 enum GaussianTwinLinkPersistence {
     static let targetUserInfoKey = "target"
 
-    /// Whether the viewport preview is on. The live editor reads the View menu toggle; tests
-    /// pin it without touching `UserDefaults.standard`.
-    nonisolated(unsafe) static var previewEnabled: () -> Bool = { GaussianTwinPreviewSettings.shared.isEnabled }
+    /// Whether the viewport preview is on: the twin system is installed (View > Preview Splat
+    /// Twins, an item of the UntoldGaussianTwins plugin package). Tests pin it.
+    nonisolated(unsafe) static var previewEnabled: () -> Bool = { GaussianTwinSystem.shared.isInstalled }
 
     // MARK: - Target resolution
 

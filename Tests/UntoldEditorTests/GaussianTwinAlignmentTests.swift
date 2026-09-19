@@ -42,7 +42,7 @@ final class GaussianTwinAlignmentTests: XCTestCase {
     override func tearDown() {
         GaussianTwinAlignMode.shared.leave()
         GaussianDebugOptions.shared.disableOccluderShell = savedDisableOccluderShell
-        GaussianTwinLinkPersistence.previewEnabled = { GaussianTwinPreviewSettings.shared.isEnabled }
+        GaussianTwinLinkPersistence.previewEnabled = { GaussianTwinSystem.shared.isInstalled }
         if let directory {
             try? FileManager.default.removeItem(at: directory)
         }
@@ -579,12 +579,6 @@ final class GaussianTwinAlignmentTests: XCTestCase {
     }
 
     func test_alignMode_endsOnSceneResetAndWhenThePreviewGoesOff() throws {
-        let suite = "GaussianTwinAlignmentTests-\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let settings = GaussianTwinPreviewSettings(defaults: defaults, installer: .init(install: {}, uninstall: {}, resetAdoption: {}))
-        settings.activate()
-
         let model = makeModel()
         model.assign(payloadURL: payload)
         model.setSwapDistance(2)
@@ -592,21 +586,31 @@ final class GaussianTwinAlignmentTests: XCTestCase {
 
         model.setAlignMode(true)
         XCTAssertTrue(model.isAlignMode)
-        settings.sceneDidReset()
+        // What EditorView does when a scene is loaded, cleared or the project switches.
+        GaussianTwinAlignMode.shared.leave()
         XCTAssertFalse(model.isAlignMode, "the scene's entities are gone; their ids will be reused")
         XCTAssertFalse(GaussianTwinAlignMode.shared.isActive)
         XCTAssertFalse(GaussianDebugOptions.shared.disableOccluderShell)
         XCTAssertEqual(twin()?.options.swapDistanceMeters, 2, "an entity that is still there gets its own options back")
 
+        // The preview is the twin system running; View > Preview Splat Twins belongs to the
+        // UntoldGaussianTwins plugin package, and the menu host announces every value change.
         model.setAlignMode(true)
         XCTAssertTrue(model.isAlignMode)
-        settings.isEnabled = false
+        GaussianTwinSystem.shared.install()
+        defer { GaussianTwinSystem.shared.uninstall() }
+        EditorMenuPluginHost.shared.valuesDidChange.send()
+        XCTAssertTrue(model.isAlignMode, "a change that keeps the system running keeps the mode")
+
+        GaussianTwinSystem.shared.uninstall()
+        EditorMenuPluginHost.shared.valuesDidChange.send()
         XCTAssertFalse(model.isAlignMode, "no preview, no align mode")
         XCTAssertFalse(GaussianDebugOptions.shared.disableOccluderShell)
         XCTAssertEqual(twin()?.options.swapDistanceMeters, 2)
         XCTAssertFalse(try XCTUnwrap(twin()?.options.showsMeshWhileSwapped))
 
-        settings.isEnabled = true
+        GaussianTwinSystem.shared.install()
+        EditorMenuPluginHost.shared.valuesDidChange.send()
         XCTAssertFalse(model.isAlignMode, "turning the preview back on does not re-enter it")
     }
 
