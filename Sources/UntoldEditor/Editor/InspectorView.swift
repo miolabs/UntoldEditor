@@ -398,6 +398,14 @@ struct InspectorView: View {
                             AssetNodeInspectorBanner(entityId: entityId, selectionManager: selectionManager)
                         }
 
+                        // The entity's own properties, when it is a kind of entity written in code
+                        // (EntityPlugin). They are the entity, so they come before its components.
+                        if EntityPluginInspectorView.isAvailable(for: entityId) {
+                            EntityPluginInspectorView(entityId: entityId, refreshView: refreshView)
+                                .frame(minWidth: 200, maxWidth: 250)
+                                .id(entityId)
+                        }
+
                         if hasComponent(entityId: entityId, componentType: TileComponent.self) {
                             TileMeshListInspectorView(entityId: entityId)
                             Divider()
@@ -478,29 +486,23 @@ struct InspectorView: View {
                                 Divider()
                             }
 
-                            let addableComponents = availableComponentsWithFlags()
-                            if addableComponents.isEmpty == false {
-                                Menu {
-                                    ForEach(addableComponents, id: \.id) { component in
-                                        Button(component.name) {
-                                            addComponentToEntity_Editor(componentType: component.type)
-                                        }
-                                    }
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "plus.circle.fill")
-                                        Text("Add Component")
-                                            .fontWeight(.regular)
-                                    }
-                                    .padding(.vertical, 6)
-                                    .padding(.horizontal, 10)
-                                    .background(Color.accentColor)
-                                    .foregroundColor(.editorTextPrimary)
-                                    .cornerRadius(6)
-                                }
-                                .menuStyle(.borderlessButton)
-                                .padding(.top, 8)
+                            // Component plugins written in the project's Swift sources and loaded by
+                            // the editor, one block each like the engine's above. Ad-hoc for the same
+                            // reason as Splat Twin.
+                            if ScenePluginInspectorView.isAvailable(for: entityId) {
+                                ScenePluginInspectorView(entityId: entityId, refreshView: refreshView)
+                                    .frame(minWidth: 200, maxWidth: 250)
+                                    .id(entityId)
                             }
+
+                            // One menu for everything that can be added: the engine's components
+                            // and the ones the loaded code defines.
+                            AddComponentMenu(
+                                entityId: entityId,
+                                engineComponents: availableComponentsWithFlags(),
+                                addEngineComponent: { addComponentToEntity_Editor(componentType: $0) },
+                                refreshView: refreshView
+                            )
 
                         } else {
                             Text("No entity selected").foregroundColor(.editorTextTertiary)

@@ -138,5 +138,13 @@ func canRemoveComponentFromInspector(componentType: Any.Type, from entityId: Ent
         return false
     }
 
+    // A mesh that the entity's own plugin built (a torus's ring) is part of the entity:
+    // it goes when the entity does, not on its own.
+    if ObjectIdentifier(componentType) == ObjectIdentifier(RenderComponent.self),
+       EntityPluginInspectorView.generatedMeshIsOwned(on: entityId)
+    {
+        return false
+    }
+
     return canShowComponentInInspector(componentType: componentType, for: entityId)
 }

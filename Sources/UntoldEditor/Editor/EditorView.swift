@@ -158,6 +158,8 @@ public struct EditorView: View {
         registerEditorRenderExtension()
         // Splat twin swaps preview in the viewport (View > Preview Splat Twins, on by default).
         GaussianTwinPreviewSettings.shared.activate()
+        // Compiles and loads the open project's code components and editor extensions.
+        ComponentLibraryController.shared.activate()
 
         if let r = renderer, let v = renderer?.metalView {
             r.setupCallbacks(gameUpdate: { _ in }, handleInput: r.handleSceneInput)
@@ -202,14 +204,7 @@ public struct EditorView: View {
                                         onUnparentEntity: editor_unparentEntity,
                                         onDeleteEntity: editor_removeEntity(_:),
                                         onDropRow: { payload, parent in
-                                            switch payload {
-                                            case let .asset(assetPayload):
-                                                editor_placeDroppedAsset(assetPayload, parent: parent)
-                                            case let .light(lightPayload):
-                                                editor_placeDroppedLight(lightPayload, parent: parent)
-                                            case let .primitive(primitivePayload):
-                                                editor_placeDroppedPrimitive(primitivePayload, parent: parent)
-                                            }
+                                            editor_placeDroppedRow(payload, parent: parent)
                                         }
                                     )
                                 }
@@ -308,6 +303,13 @@ public struct EditorView: View {
             sceneCatalog.refresh()
             syncEditorAvailabilityForExperienceMode()
 
+            // `UntoldEditor --open-project <folder>` skips the welcome screen.
+            if let launchProject = EditorLaunchOptions.projectToOpen() {
+                switchToEditMode()
+                showWelcomeStart = false
+                openProject(at: launchProject)
+            }
+
             // Listen for asset instance loading completion
             NotificationCenter.default.addObserver(
                 forName: .assetInstanceDidLoad,
@@ -325,6 +327,19 @@ public struct EditorView: View {
                 queue: .main
             ) { _ in
                 cleanupForProjectSwitch()
+            }
+
+            // A freshly built component library cannot replace the running one mid-play.
+            // Registered here, not as another view modifier: this body is at the limit of
+            // what the type checker resolves in reasonable time.
+            NotificationCenter.default.addObserver(
+                forName: .codeComponentsRequestStopPlay,
+                object: nil,
+                queue: .main
+            ) { _ in
+                if isPlaying {
+                    setEditorPlayMode(false)
+                }
             }
         }
         .onChange(of: playbackSettings.useSceneCameraDuringPlay) { _, _ in
@@ -575,15 +590,42 @@ public struct EditorView: View {
         let viewportSize = renderer?.metalView.bounds.size ?? .zero
         return loadDroppedRowPayload(from: providers) { payload in
             let position = sceneCameraGroundPlaneHit(atViewportLocation: location, viewportSize: viewportSize)
-            switch payload {
-            case let .asset(assetPayload):
-                editor_placeDroppedAsset(assetPayload, parent: nil, at: position)
-            case let .light(lightPayload):
-                editor_placeDroppedLight(lightPayload, parent: nil, at: position)
-            case let .primitive(primitivePayload):
-                editor_placeDroppedPrimitive(primitivePayload, parent: nil, at: position)
-            }
+            editor_placeDroppedRow(payload, parent: nil, at: position)
         }
+    }
+
+    /// Places whatever a dropped row carries. One place for the hierarchy drop and the
+    /// viewport drop, and out of `body`, which is at the type checker's limit.
+    private func editor_placeDroppedRow(_ payload: DroppedRowPayload, parent: EntityID?, at position: simd_float3? = nil) {
+        switch payload {
+        case let .asset(assetPayload):
+            editor_placeDroppedAsset(assetPayload, parent: parent, at: position)
+        case let .light(lightPayload):
+            editor_placeDroppedLight(lightPayload, parent: parent, at: position)
+        case let .primitive(primitivePayload):
+            editor_placeDroppedPrimitive(primitivePayload, parent: parent, at: position)
+        case let .entityPlugin(pluginPayload):
+            editor_placeDroppedEntityPlugin(pluginPayload, parent: parent, at: position)
+        }
+    }
+
+    /// Places a dropped entity template row (a kind of entity that loaded code added),
+    /// parenting it under `parent` for a hierarchy drop, same as `editor_placeDroppedAsset`.
+    private func editor_placeDroppedEntityPlugin(_ payload: EntityPluginDragPayload, parent: EntityID?, at position: simd_float3? = nil) {
+        guard let placement = placeEntityPlugin(
+            payload.entityPlugin,
+            at: position,
+            sceneGraphModel: sceneGraphModel,
+            selectionManager: selectionManager
+        ) else {
+            showDropStatus("'\(payload.entityPlugin)' is no longer loaded.", isError: true)
+            return
+        }
+        if let parent {
+            editor_parentEntity(childId: placement.entityId, parentId: parent)
+        }
+        editor_entities = getAllGameEntities()
+        showDropStatus(placement.statusMessage, isError: placement.isError)
     }
 
     /// Places a dropped asset browser row, parenting it under `parent` for a
@@ -659,6 +701,7 @@ public struct EditorView: View {
         case explore
         case console
         case tasks
+        case components
     }
 
     private enum EnvEffectsTab: Hashable {
@@ -861,6 +904,9 @@ public struct EditorView: View {
             panelTabButton(.explore, title: "Explore", icon: "square.grid.2x2")
             panelTabButton(.console, title: "Console", icon: "terminal")
             panelTabButton(.tasks, title: "Tasks", icon: "list.bullet.rectangle")
+            if EditorFeatureFlags.enableCodeComponents {
+                panelTabButton(.components, title: "Plugins", icon: "puzzlepiece.extension")
+            }
         }
         .padding(3)
         .background(Color.editorSurface.opacity(0.6))
@@ -909,6 +955,7 @@ public struct EditorView: View {
         case .explore: return "Browse asset packs."
         case .console: return "Show Console"
         case .tasks: return "Show background tasks (exports, cooks, builds, loads)"
+        case .components: return "Show the project's code components: build status, loaded types, compiler errors"
         }
     }
 
@@ -918,6 +965,7 @@ public struct EditorView: View {
         case .explore: return "Filter packs"
         case .console: return "Filter console"
         case .tasks: return "Filter tasks"
+        case .components: return "Filter components"
         }
     }
 
@@ -1071,6 +1119,8 @@ public struct EditorView: View {
                     LogConsoleView(searchQuery: $bottomSearchQuery, autoScroll: $consoleAutoScroll)
                 case .tasks:
                     TasksPanelView(searchQuery: $bottomSearchQuery)
+                case .components:
+                    ComponentsPanelView(searchQuery: $bottomSearchQuery)
                 }
             }
             .frame(height: 200)
@@ -1262,15 +1312,24 @@ public struct EditorView: View {
             showWelcomeStart = true
             return
         }
+        openProject(at: projectURL)
+    }
 
+    /// Validates and opens the project folder at `projectURL`. Shared by the Open panel and the
+    /// `--open-project` launch argument.
+    @discardableResult
+    private func openProject(at projectURL: URL) -> Bool {
         let fm = FileManager.default
         let projectName = projectURL.lastPathComponent
         let xcodeProjectPath = projectURL.appendingPathComponent("\(projectName).xcodeproj")
-        guard fm.fileExists(atPath: xcodeProjectPath.path) else {
-            invalidProjectMessage = "This doesn't appear to be a valid UntoldEngine project.\n\nExpected to find: \(projectName).xcodeproj"
+        // XcodeGen projects are defined by project.yml; the .xcodeproj is generated from it and
+        // is often not checked in, so either one marks a project folder.
+        let projectSpecPath = projectURL.appendingPathComponent("project.yml")
+        guard fm.fileExists(atPath: xcodeProjectPath.path) || fm.fileExists(atPath: projectSpecPath.path) else {
+            invalidProjectMessage = "This doesn't appear to be a valid UntoldEngine project.\n\nExpected to find: \(projectName).xcodeproj or project.yml"
             showInvalidProjectAlert = true
             showWelcomeStart = true
-            return
+            return false
         }
 
         let gameDataPath = projectURL
@@ -1286,7 +1345,7 @@ public struct EditorView: View {
                 invalidProjectMessage = "Failed to create GameData folder structure:\n\n\(error.localizedDescription)"
                 showInvalidProjectAlert = true
                 showWelcomeStart = true
-                return
+                return false
             }
         }
 
@@ -1304,6 +1363,7 @@ public struct EditorView: View {
 
         print("✅ Opened project: \(projectName)")
         print("📁 Asset base path set to: \(gameDataPath.path)")
+        return true
     }
 
     private func editor_handleSave() {
@@ -1454,6 +1514,7 @@ public struct EditorView: View {
             EditorGaussianAssetState.shared.clear()
             EditorUndoManager.shared.clear()
             GaussianTwinPreviewSettings.shared.sceneDidReset()
+            EditorMenuPluginHost.shared.sceneDidReset()
             EditorSceneDirtyState.shared.clear()
             sceneAuthoredGameCamera = nil
             deserializeScene(sceneData: sceneData, onGaussianEntityRestored: restoreEditorGaussianState)
@@ -1484,6 +1545,7 @@ public struct EditorView: View {
         EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
         GaussianTwinPreviewSettings.shared.sceneDidReset()
+        EditorMenuPluginHost.shared.sceneDidReset()
         EditorSceneDirtyState.shared.clear()
         sceneAuthoredGameCamera = nil
 
@@ -1587,6 +1649,7 @@ public struct EditorView: View {
         EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
         GaussianTwinPreviewSettings.shared.sceneDidReset()
+        EditorMenuPluginHost.shared.sceneDidReset()
         sceneAuthoredGameCamera = nil
 
         let light = createEntity()
@@ -1769,11 +1832,14 @@ public struct EditorView: View {
             updateActiveCameraForPlayMode()
             AnimationSystem.shared.isEnabled = true
             USCSystem.shared.startPlayMode()
+            ComponentLibraryController.shared.playModeDidStart()
         } else {
             isPlaying = false
             gameMode = false
             AnimationSystem.shared.isEnabled = false
             USCSystem.shared.stopPlayMode()
+            // A library built during play waits for the snapshot restore below before it loads.
+            ComponentLibraryController.shared.playModeDidStop(restoring: capturesSnapshot && playModeSnapshot != nil)
             // Active-camera fixup is deliberately NOT done here: if a restore is about
             // to run, it must target the restored entities (new IDs), not the
             // about-to-be-destroyed drifted ones. beginPlayModeRestore's completion
@@ -1817,6 +1883,7 @@ public struct EditorView: View {
             updateActiveCameraForPlayMode()
 
             isRestoringPlayMode = false
+            ComponentLibraryController.shared.playModeRestoreDidFinish()
         }
     }
 

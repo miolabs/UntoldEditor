@@ -1,0 +1,397 @@
+//
+//  ComponentLibraryController.swift
+//  UntoldEditor
+//
+// Copyright (C) Untold Engine Studios
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+
+import Combine
+import CryptoKit
+import Foundation
+import UntoldComponentKit
+import UntoldEngine
+
+extension Notification.Name {
+    /// A freshly built library is waiting and play mode has to end before it can be loaded.
+    /// `EditorView` answers by stopping play, which restores the pre-play scene.
+    static let codeComponentsRequestStopPlay = Notification.Name("ComponentPlugins.RequestStopPlay")
+}
+
+/// Ties the pieces together: reacts to the project opening and closing, builds the project's
+/// component sources (and its plugins' editor sources) off the main thread, and swaps the
+/// result in between frames.
+///
+/// A failed build changes nothing: the last good libraries stay live and the errors are shown.
+final class ComponentLibraryController: ObservableObject {
+    static let shared = ComponentLibraryController()
+
+    enum Phase: Equatable {
+        case noProject
+        /// A project is open but has nothing to compile yet.
+        case noSources
+        case building
+        /// Built; waiting for play mode to end before loading.
+        case waitingForPlayToStop
+        case loaded
+        case failed(String)
+    }
+
+    @Published private(set) var phase: Phase = .noProject
+    @Published private(set) var layout: ComponentProjectLayout?
+    @Published private(set) var diagnostics: [ComponentDiagnostic] = []
+    @Published private(set) var rawOutput = ""
+    @Published private(set) var libraries: [LoadedComponentLibrary] = []
+    @Published private(set) var revision = 0
+    @Published private(set) var lastBuildSeconds: Double?
+    @Published private(set) var lastBuildDate: Date?
+    @Published private(set) var toolchain: ComponentToolchain?
+    @Published private(set) var sdk: ComponentSDK?
+    /// Bytes of libraries from earlier revisions. They stay mapped for the life of the process.
+    @Published private(set) var retiredBytes = 0
+    @Published private(set) var extensionIssues: [String] = []
+    @Published var rebuildOnSave = false {
+        didSet {
+            guard rebuildOnSave != oldValue, let projectKey else { return }
+            UserDefaults.standard.set(rebuildOnSave, forKey: Self.rebuildOnSaveKey(projectKey))
+            restartWatcher()
+        }
+    }
+
+    /// Never reset: module names must stay unique for the life of the process, even when the
+    /// same project is closed and opened again.
+    private var revisionCounter = 0
+    private var projectKey: String?
+    private var assetBasePath: URL?
+    private var watcher: ComponentSourceWatcher?
+    private var basePathSubscription: AnyCancellable?
+    private var pendingApply: (requests: [ComponentCompileRequest], seconds: Double)?
+    private var rebuildRequestedWhileBuilding = false
+    private var isActivated = false
+    private let buildQueue = DispatchQueue(label: "com.untoldengine.editor.component-build", qos: .userInitiated)
+
+    private init() {}
+
+    // MARK: Activation
+
+    /// Called once the renderer exists. Installs the kit's system and starts following the
+    /// open project.
+    func activate() {
+        guard isActivated == false, EditorFeatureFlags.enableCodeComponents else { return }
+        isActivated = true
+        ScenePluginSystem.install()
+        EngineExtensionRegistry.shared.register(EditorMenuPluginTicker())
+        basePathSubscription = EditorAssetBasePath.shared.$basePath
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] basePath in
+                self?.projectDidChange(assetBasePath: basePath)
+            }
+    }
+
+    // MARK: Project lifecycle
+
+    func projectDidChange(assetBasePath basePath: URL?) {
+        tearDownCurrentProject()
+        assetBasePath = basePath
+        guard let basePath else {
+            phase = .noProject
+            return
+        }
+
+        let root = ComponentSourceLocator.projectRoot(forAssetBasePath: basePath)
+        let key = Self.projectKey(for: root)
+        projectKey = key
+        sdk = ComponentSDK.resolve()
+        layout = ComponentSourceLocator.layout(forAssetBasePath: basePath, sdk: sdk)
+        // The Plugins tab shows these too; the console keeps them where they are easy to find.
+        for problem in layout?.problems ?? [] {
+            Logger.logWarning(message: "[Plugins] \(problem)", category: "Plugins")
+        }
+        rebuildOnSave = UserDefaults.standard.bool(forKey: Self.rebuildOnSaveKey(key))
+        try? FileManager.default.removeItem(at: cacheDirectory(for: key))
+        restartWatcher()
+
+        if layout?.units.isEmpty ?? true {
+            phase = .noSources
+        } else {
+            buildAndLoad()
+        }
+    }
+
+    private func tearDownCurrentProject() {
+        watcher?.stop()
+        watcher = nil
+        pendingApply = nil
+        EditorMenuPluginHost.shared.unloadAll()
+        ScenePluginSystem.shared.prepareForReload()
+        unregisterLoadedTypes()
+        retiredBytes += libraries.reduce(0) { $0 + $1.byteSize }
+        libraries = []
+        diagnostics = []
+        rawOutput = ""
+        extensionIssues = []
+        layout = nil
+        projectKey = nil
+    }
+
+    // MARK: Building
+
+    /// Compiles every unit of the open project and, on success, loads the result.
+    func buildAndLoad() {
+        guard let basePath = assetBasePath, let projectKey else { return }
+        if phase == .building {
+            rebuildRequestedWhileBuilding = true
+            return
+        }
+
+        let currentLayout = ComponentSourceLocator.layout(forAssetBasePath: basePath, sdk: sdk)
+        layout = currentLayout
+        guard currentLayout.units.isEmpty == false else {
+            phase = .noSources
+            return
+        }
+        guard let sdk else {
+            fail(ComponentBuildError.sdkMissing.localizedDescription)
+            return
+        }
+
+        let located: ComponentToolchain
+        switch toolchain.map(Result<ComponentToolchain, ComponentBuildError>.success) ?? ComponentToolchain.locate() {
+        case let .success(found):
+            located = found
+            toolchain = found
+        case let .failure(error):
+            fail(error.localizedDescription)
+            return
+        }
+        if let required = sdk.recordedCompilerVersion, required != located.compilerVersion {
+            fail(ComponentBuildError.compilerMismatch(editor: required, installed: located.compilerVersion).localizedDescription)
+            return
+        }
+
+        revisionCounter += 1
+        let buildRevision = revisionCounter
+        let output = cacheDirectory(for: projectKey)
+        let requests = currentLayout.units.map {
+            ComponentCompileRequest(unit: $0, revision: buildRevision, outputDirectory: output, sdk: sdk, toolchain: located)
+        }
+
+        phase = .building
+        let task = TaskCenter.begin("Building components", detail: "\(requests.count) module\(requests.count == 1 ? "" : "s")")
+
+        buildQueue.async { [weak self] in
+            var results: [ComponentCompileResult] = []
+            for request in requests {
+                task.setDetail(request.moduleName)
+                let result = ComponentCompiler.compile(request) { task.attach(process: $0) }
+                results.append(result)
+                if result.succeeded == false {
+                    break
+                }
+            }
+            DispatchQueue.main.async {
+                self?.buildDidFinish(requests: requests, results: results, task: task, projectKey: projectKey)
+            }
+        }
+    }
+
+    private func buildDidFinish(
+        requests: [ComponentCompileRequest],
+        results: [ComponentCompileResult],
+        task: EditorTaskHandle,
+        projectKey builtFor: String
+    ) {
+        // The project may have been closed or switched while the compiler ran.
+        guard builtFor == projectKey else {
+            task.markCancelled("Project changed")
+            phase = assetBasePath == nil ? .noProject : phase
+            return
+        }
+
+        let seconds = results.reduce(0) { $0 + $1.seconds }
+        diagnostics = results.flatMap(\.diagnostics)
+        rawOutput = results.map(\.output).joined()
+        lastBuildSeconds = seconds
+        lastBuildDate = Date()
+
+        let succeeded = results.count == requests.count && results.allSatisfy(\.succeeded)
+        if succeeded {
+            task.succeed(String(format: "Built in %.2fs", seconds))
+            if gameMode {
+                pendingApply = (requests, seconds)
+                phase = .waitingForPlayToStop
+                NotificationCenter.default.post(name: .codeComponentsRequestStopPlay, object: nil)
+            } else {
+                apply(requests)
+            }
+        } else {
+            let errors = diagnostics.filter { $0.severity == .error }
+            for diagnostic in errors {
+                Logger.logError(message: "[Plugins] \(diagnostic.fileName):\(diagnostic.line): \(diagnostic.message)", category: "Plugins")
+            }
+            let summary = errors.isEmpty ? "The compiler failed. See the Components panel for its output." : "\(errors.count) error\(errors.count == 1 ? "" : "s")"
+            task.fail(summary)
+            phase = .failed(summary)
+        }
+
+        if rebuildRequestedWhileBuilding {
+            rebuildRequestedWhileBuilding = false
+            buildAndLoad()
+        }
+    }
+
+    private func fail(_ message: String) {
+        Logger.logError(message: "[Plugins] \(message)", category: "Plugins")
+        phase = .failed(message)
+    }
+
+    // MARK: Loading
+
+    /// The reload protocol. Runs on the main thread between frames.
+    private func apply(_ requests: [ComponentCompileRequest]) {
+        guard let projectKey else { return }
+        EditorMenuPluginHost.shared.unloadAll()
+        ScenePluginSystem.shared.prepareForReload()
+        unregisterLoadedTypes()
+
+        var loaded: [LoadedComponentLibrary] = []
+        var failure: String?
+        for request in requests {
+            switch ComponentLibraryLoader.load(request) {
+            case let .success(library): loaded.append(library)
+            case let .failure(error): failure = error.localizedDescription
+            }
+            if failure != nil {
+                break
+            }
+        }
+
+        // Even after a load failure, bind what did register so the scene is not left bare.
+        ScenePluginSystem.shared.finishReload()
+        EditorMenuPluginHost.shared.load(typeNames: loaded.flatMap(\.menuPluginNames), projectKey: projectKey)
+        extensionIssues = EditorMenuPluginHost.shared.issues
+
+        retiredBytes += libraries.reduce(0) { $0 + $1.byteSize }
+        libraries = loaded
+        revision = requests.first?.revision ?? revision
+
+        if let failure {
+            fail(failure)
+        } else {
+            phase = .loaded
+            let components = loaded.flatMap(\.componentNames)
+            Logger.log(message: "[Plugins] Loaded revision \(revision): \(components.isEmpty ? "no components" : components.joined(separator: ", "))", category: "Plugins")
+            let entityPlugins = loaded.flatMap(\.entityPluginNames)
+            if entityPlugins.isEmpty == false {
+                Logger.log(message: "[Plugins] Entity plugins: \(entityPlugins.joined(separator: ", "))", category: "Plugins")
+            }
+            for entry in EditorMenuPluginHost.shared.live {
+                let items = entry.menuIdentifiers.isEmpty ? "no menu items" : entry.menuIdentifiers.joined(separator: ", ")
+                Logger.log(message: "[Plugins] Menu plugin \(entry.name): \(items)", category: "Plugins")
+            }
+            for issue in extensionIssues {
+                Logger.logWarning(message: "[Plugins] \(issue)", category: "Plugins")
+            }
+        }
+        editorController?.refreshInspector()
+    }
+
+    /// Types from loaded libraries carry a revision above zero. They are dropped before a new
+    /// revision registers, so a type that was deleted from the sources does not linger.
+    private func unregisterLoadedTypes() {
+        for entry in ComponentPluginRegistry.shared.entries where entry.revision > 0 {
+            ComponentPluginRegistry.shared.unregister(name: entry.name)
+        }
+        for entry in EditorMenuPluginRegistry.shared.entries where entry.revision > 0 {
+            EditorMenuPluginRegistry.shared.unregister(name: entry.name)
+        }
+        for entry in EntityPluginRegistry.shared.entries where entry.revision > 0 {
+            EntityPluginRegistry.shared.unregister(name: entry.name)
+        }
+    }
+
+    // MARK: Play mode
+
+    func playModeDidStart() {
+        ScenePluginSystem.shared.startPlayMode()
+        EditorMenuPluginHost.shared.playModeDidChange(true)
+    }
+
+    /// `restoring` is true when the editor is about to reload the pre-play snapshot; the
+    /// pending library then waits for `playModeRestoreDidFinish()`.
+    func playModeDidStop(restoring: Bool) {
+        ScenePluginSystem.shared.stopPlayMode()
+        EditorMenuPluginHost.shared.playModeDidChange(false)
+        if restoring == false {
+            applyPendingIfAny()
+        }
+    }
+
+    func playModeRestoreDidFinish() {
+        ScenePluginSystem.shared.bindPending()
+        applyPendingIfAny()
+    }
+
+    private func applyPendingIfAny() {
+        guard let pending = pendingApply else { return }
+        pendingApply = nil
+        apply(pending.requests)
+    }
+
+    // MARK: Creating the plugins folder
+
+    /// Gives the open project a plugins folder with a starter component, links the kit in
+    /// its `project.yml`, regenerates the Xcode project, and builds. What is left for the
+    /// developer (the registration calls in the game) is written to the console.
+    func createPluginsFolder() throws {
+        guard let layout else { return }
+        let result = try BuildSystem.shared.addCodeComponents(toProjectAt: layout.projectRoot, projectName: layout.projectName)
+        var summary = "[Plugins] Plugins folder: \(result.pluginsDirectory.path)."
+        if result.updatedProjectSpec {
+            summary += " project.yml now links UntoldComponentKit."
+        }
+        if result.regeneratedXcodeProject {
+            summary += " The Xcode project was regenerated."
+        }
+        Logger.log(message: summary, category: "Plugins")
+        for note in result.notes {
+            Logger.log(message: "[Plugins] \(note)", category: "Plugins")
+        }
+        restartWatcher()
+        buildAndLoad()
+    }
+
+    // MARK: Watching
+
+    private func restartWatcher() {
+        watcher?.stop()
+        watcher = nil
+        guard rebuildOnSave, let layout else { return }
+        let watcher = ComponentSourceWatcher(directories: layout.watchedDirectories) { [weak self] in
+            self?.buildAndLoad()
+        }
+        watcher.start()
+        self.watcher = watcher
+    }
+
+    // MARK: Paths and keys
+
+    static func projectKey(for projectRoot: URL) -> String {
+        let digest = SHA256.hash(data: Data(projectRoot.standardizedFileURL.path.utf8))
+        return digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func rebuildOnSaveKey(_ projectKey: String) -> String {
+        "editor.components.\(projectKey).rebuildOnSave"
+    }
+
+    func cacheDirectory(for projectKey: String) -> URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return caches.appendingPathComponent("com.untoldengine.studio/Components/\(projectKey)", isDirectory: true)
+    }
+}
