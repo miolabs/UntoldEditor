@@ -1,4 +1,37 @@
 # Changelog
+## v0.21.0 - 2026-09-27
+### 🐞 Fixes
+- [Patch] Dividers: system resize cursor and a preview line instead of live resizing (e27b770…)
+- [Patch] Docking: drag tabs by the pointer, not the system drag (5038617…)
+- [Patch] Only the toolbar row drags the window (d11023d…)
+- [Patch] Implemented Gaussian viewport selection using their world-space bounding boxes (#136) (43420d7…)
+### 📚 Docs
+- [Docs] Add Engineering Principles and contributor docs (d1111c1…)
+### 🚀 Features
+- [Feature] Editor palette from the redesign spec and the shared control primitives (fae9a08…)
+- [Feature] Toolbar in the title bar, status bar and play session controls (f07d94f…)
+- [Feature] Docking: three areas around the viewport, panels as tabs (e2addac…)
+- [Feature] Add texture debug views to the View menu (#137) (c080f20…)
+- [Feature] Add spatial debug controls to the View menu (#138) (578b904…)
+- [Feature] Add a View menu toggle for Gaussian chunk bounding-box visualization (#139) (6d3e983…)
+## v0.20.0 - 2026-09-20
+### 🐞 Fixes
+- [Patch] Open a project folder that has a project.yml but no generated Xcode project (3de9f54…)
+- [Patch] Cover entity templates in the Component SDK packaging check (2ff8b46…)
+- [Patch] Pick handles by projecting them to the screen, with either mouse button (ea5aab0…)
+- [Patch] Name a plugin package's editor-side library after its folder (eb601d9…)
+- [Patch] Label the cook sheet's binary sizes GiB and MiB (7e4743f…)
+### 🚀 Features
+- [Feature] Code Components: compile, load and reload project code in the editor (ea127f4…)
+- [Feature] Wire Code Components into the editor, and open a project at launch (3b37da7…)
+- [Feature] Package the Component SDK in the app bundle, and verify it (cb92463…)
+- [Feature] New projects get code components, pinned to the editor's engine (980bb28…)
+- [Feature] One Add Component menu, and entity kinds from loaded code (2b824ff…)
+- [Feature] Keep a kind's own components out of Add Component, and locked to their entity (4e080fe…)
+- [Feature] Entity plugins in the editor: own properties, geometry and editor representation (1f926ea…)
+- [Feature] Name the plugins folder and plugin packages apart in the editor (dfe6add…)
+- [Feature] Move a kind of entity's control points with the gizmo (cdfe8ce…)
+- [Feature] Gaussian capture testing and render-fidelity switches in the editor (1e85e08…)
 ## v0.19.1 - 2026-09-16
 ### 🐞 Fixes
 - [Patch] Only route canvas input to the 3D view when it is frontmost (53af52e…)
