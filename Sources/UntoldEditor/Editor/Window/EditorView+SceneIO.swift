@@ -218,6 +218,7 @@ extension EditorView {
 
         destroyAllEntities()
         removeGizmo()
+        selectionManager.resetEntityStates()
         EditorComponentsState.shared.clear()
         EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
@@ -322,6 +323,7 @@ extension EditorView {
         }
         destroyAllEntities()
         removeGizmo()
+        selectionManager.resetEntityStates()
         EditorComponentsState.shared.clear()
         EditorGaussianAssetState.shared.clear()
         EditorUndoManager.shared.clear()
