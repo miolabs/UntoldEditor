@@ -17,7 +17,7 @@ import UntoldEngine
 extension AssetBrowserView {
     func queueRuntimeExport(sourceURL: URL, category: AssetCategory) {
         let outputExtension = category == .animations ? "untoldanim" : runtimeAssetExtension
-        let location = runtimeExportLocation(for: sourceURL)
+        let location = runtimeExportLocation(for: sourceURL, category: category, assetBasePath: assetBasePath)
         let outputURL = location.outputFolder
             .appendingPathComponent(sourceURL.deletingPathExtension().lastPathComponent)
             .appendingPathExtension(outputExtension)
@@ -316,6 +316,11 @@ extension AssetBrowserView {
                         Logger.log(message: "Export cancelled for \(request.sourceURL.lastPathComponent)")
                         showStatus("Export cancelled")
                     } else if exportSucceeded {
+                        navigateToCookedAsset(
+                            folder: outputURL.deletingLastPathComponent(),
+                            assetName: outputURL.lastPathComponent,
+                            category: request.category
+                        )
                         loadAssets()
                         showStatus("Exported \(outputURL.lastPathComponent)")
                     } else {
