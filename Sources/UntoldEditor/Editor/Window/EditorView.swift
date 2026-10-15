@@ -38,7 +38,6 @@ public struct EditorView: View {
     @State var showBlockedDuringPlayAlert = false
     @State var showCreateProject = false
     @ObservedObject var taskCenter = TaskCenter.shared
-    @State var rightPanelEnvTab: EnvEffectsTab = .environment
     @State var consoleAutoScroll: Bool = true
     @State var showInvalidProjectAlert = false
     @State var invalidProjectMessage = ""
@@ -132,6 +131,17 @@ public struct EditorView: View {
                     layout: dockLayout,
                     registry: dockRegistry,
                     viewportOnly: experienceMode == .explore
+                )
+                // The panels that float get windows of their own, fed from the
+                // same state; none while the viewport shows alone.
+                .background(
+                    FloatingPanelsBridge(
+                        panels: experienceMode == .explore ? [] : dockLayout.state.floating,
+                        layout: dockLayout,
+                        content: panelContent,
+                        accessories: panelAccessories
+                    )
+                    .frame(width: 0, height: 0)
                 )
                 editorStatusBar
             }
