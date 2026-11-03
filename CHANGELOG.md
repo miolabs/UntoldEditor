@@ -1,4 +1,22 @@
 # Changelog
+## v0.25.0 - 2026-11-01
+### 🚀 Features
+- [Feature] Build the LOD chains of a cooked pack from the Cook sheet (#193) (1ef0ec4…)
+## v0.24.1 - 2026-10-26
+### 🐞 Fixes
+- [Bugfix] Don't require lightTile pipeline success on devices without tile shading (#191) (c9183b2…)
+- [Bugfix] Remove a .untoldpack's cooked assets folder and fix its Resources source-folder cleanup (#187) (#189) (8ff9ea0…)
+- [Patch] Remove dead Apply Color LUT toggle from Environment panel (#188) (55c5619…)
+## v0.24.0 - 2026-10-19
+### 🐞 Fixes
+- [Bugfix] Wait for entity destruction to finalize before rebuilding scene on Play-Stop restore (#181) (365528b…)
+- [Patch] Clean up Parallax inspector fields (#180) (4ae3cef…)
+### 🚀 Features
+- [Feature] The anti-aliasing picker offers the temporal modes, and the tone-map menu no curve (#182) (32954ab…)
+### 📦 Project Layout
+- [Project Layout] Resources/GameData workflow in the Asset Browser (#175) (40cb9de…)
+### 🧰 Maintenance
+- [Refactor] Rename Plugins panel and log labels to Code Components (#179) (60c084c…)
 ## v0.23.0 - 2026-10-13
 ### 🐞 Fixes
 - [Patch] Hide cook-source folders in asset browser (#154) (ad012c1…)
