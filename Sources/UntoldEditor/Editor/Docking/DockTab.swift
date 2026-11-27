@@ -12,14 +12,16 @@ import SwiftUI
 
 /// One tab of an area's strip. A click brings the panel to front, a drag by the
 /// pointer carries it to another area (no system drag, so the pointer keeps
-/// its shape), the context menu moves it to an area or closes it, and a close
-/// button appears on hover.
+/// its shape), the context menu moves it to an area or closes it, a close
+/// button appears on hover, and a badge counts what the panel holds unseen
+/// while it is not in front.
 struct DockTab: View {
     let panel: PanelID
     let isSelected: Bool
     /// The only tab of its area: drawn as a plain title rather than a pill.
     let isAlone: Bool
     @ObservedObject var layout: EditorDockLayout
+    @ObservedObject private var badges = EditorPanelBadges.shared
 
     @State private var isHovering = false
 
@@ -29,6 +31,9 @@ struct DockTab: View {
                 .font(isSelected ? EditorType.title : EditorType.body)
                 .foregroundColor(isSelected ? Color.editorTextPrimary : Color.editorTextSecondary)
                 .lineLimit(1)
+            if isSelected == false, badges.count(for: panel) > 0 {
+                DockTabBadge(count: badges.count(for: panel))
+            }
             if panel.canClose, isHovering {
                 Button {
                     layout.close(panel)

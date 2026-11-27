@@ -1,6 +1,6 @@
 //
 //  LogConsoleView.swift
-//
+//  UntoldEditor
 //
 // Copyright (C) Untold Engine Studios
 //
@@ -8,98 +8,84 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
-import Combine
-import Foundation
 import SwiftUI
 import UntoldEngine
 
+/// The Console panel: the engine's log under a sub-bar of level chips and
+/// switches, on the mockup's grid. The list follows new messages unless
+/// Auto-scroll is off or an error stopped it; the panel tells the model when
+/// it is on screen, so errors logged while it was not are the tab's badge.
 struct LogConsoleView: View {
     @Binding var searchQuery: String
-    @Binding var autoScroll: Bool
-    @StateObject private var store = LogStore.shared
-    @State private var selectedLevel: LogLevel? = nil
-    @State private var clearLog = false
+    @ObservedObject private var model = EditorConsoleModel.shared
+    @ObservedObject private var store = LogStore.shared
 
-    private func passes(_ e: LogEvent) -> Bool {
-        (selectedLevel == nil || e.level == selectedLevel!) &&
-            (searchQuery.isEmpty ||
-                e.message.localizedCaseInsensitiveContains(searchQuery) ||
-                e.category.localizedCaseInsensitiveContains(searchQuery))
+    init(searchQuery: Binding<String>) {
+        _searchQuery = searchQuery
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ScrollViewReader { proxy in
-                List(store.entries.filter(passes)) { e in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(shortTime(e.timestamp))
-                            .font(.caption).foregroundColor(.editorTextSecondary)
-                            .frame(width: 84, alignment: .leading)
-
-                        Text(e.message)
-                            .font(.system(.body, design: .monospaced))
-                            .foregroundColor(colorForLevel(e.level))
-                            .textSelection(.enabled)
-                            .lineLimit(4)
+        let rows = ConsoleRow.rows(from: store.entries, filter: model.filter, query: searchQuery, collapsing: model.collapses)
+        let counts = ConsoleCounts(store.entries)
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                ConsoleSubBar(model: model, counts: counts) {
+                    model.resume()
+                    if let last = rows.last?.id {
+                        proxy.scrollTo(last, anchor: .bottom)
                     }
-                    .id(e.id)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .listRowBackground(Color.clear)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.editorSurface.opacity(0.9))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.editorDivider, lineWidth: 1)
-                )
-                .onChange(of: store.entries.last?.id) { _, last in
-                    if autoScroll, let last { withAnimation { proxy.scrollTo(last, anchor: .bottom) } }
+                if rows.isEmpty {
+                    emptyState
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(rows) { row in
+                                ConsoleRowView(row: row)
+                                    .id(row.id)
+                            }
+                        }
+                    }
+                    .onChange(of: rows.last?.id) { _, last in
+                        if model.follows, let last {
+                            proxy.scrollTo(last, anchor: .bottom)
+                        }
+                    }
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(8)
-    }
-
-    private func shortTime(_ d: Date) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss.SSS"
-        return f.string(from: d)
-    }
-
-    private func colorForLevel(_ level: LogLevel) -> Color {
-        switch level {
-        case .error: return .editorError
-        case .warning: return .editorWarning
-        case .info: return .editorTextPrimary
-        case .debug: return .editorTextTertiary
-        case .test: return Color.editorAccent
-        case .none: return .editorTextPrimary
+        .background(Color.editorPanelBackground)
+        .onAppear {
+            model.isVisible = true
+        }
+        .onDisappear {
+            model.isVisible = false
         }
     }
 
-    private func tag(for level: LogLevel) -> String {
-        switch level {
-        case .error: return "ERROR"
-        case .warning: return "WARN"
-        case .info: return "INFO"
-        case .debug: return "DEBUG"
-        case .test: return "TEST"
-        case .none: return ""
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "text.alignleft")
+                .font(.system(size: 22))
+                .foregroundColor(.editorTextTertiary)
+            Text(emptyText)
+                .font(EditorType.body)
+                .foregroundColor(.editorTextSecondary)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func badgeColor(for level: LogLevel) -> Color {
-        switch level {
-        case .error: return .editorError
-        case .warning: return .editorWarning
-        case .info: return .editorInfo
-        case .debug: return .editorTextTertiary
-        case .test: return .editorSuccess
-        case .none: return .clear
+    private var emptyText: String {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty == false {
+            return "No messages match “\(query)”"
+        }
+        switch model.filter {
+        case .all: return "No messages"
+        case .errors: return "No errors"
+        case .warnings: return "No warnings"
+        case .info: return "No information messages"
         }
     }
 }

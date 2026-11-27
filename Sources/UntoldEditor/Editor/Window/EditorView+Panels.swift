@@ -64,7 +64,7 @@ extension EditorView {
                 NotificationCenter.default.post(name: .assetBrowserReload, object: nil)
             })
         case .console:
-            return AnyView(LogConsoleView(searchQuery: panelSearch(.console), autoScroll: $consoleAutoScroll))
+            return AnyView(LogConsoleView(searchQuery: panelSearch(.console)))
         case .tasks:
             return AnyView(TasksPanelView(searchQuery: panelSearch(.tasks)))
         case .plugins:
@@ -73,9 +73,9 @@ extension EditorView {
     }
 
     /// The controls that go with a panel in its tab strip: a filter field, the
-    /// hierarchy's add menu, and for the console and the tasks their buttons.
-    /// The strip sizes them: beside the tabs in the bottom area, on their own
-    /// row in a side area.
+    /// hierarchy's add menu, and for the tasks their buttons; the console's
+    /// own buttons sit in its sub-bar. The strip sizes them: beside the tabs
+    /// in the bottom area, on their own row in a side area.
     func panelAccessories(_ panel: PanelID) -> AnyView? {
         switch panel {
         case .hierarchy:
@@ -86,15 +86,7 @@ extension EditorView {
         case .assets, .explore, .plugins:
             return AnyView(EditorSearchField(text: panelSearch(panel), placeholder: "Filter \(panel.title.lowercased())"))
         case .console:
-            return AnyView(HStack(spacing: 8) {
-                EditorSearchField(text: panelSearch(.console), placeholder: "Filter log")
-                Toggle("Auto-scroll", isOn: $consoleAutoScroll)
-                    .toggleStyle(.checkbox)
-                    .font(EditorType.hint)
-                EditorIconButton(systemImage: "trash", size: 22, help: "Clear console") {
-                    LogStore.shared.clear()
-                }
-            })
+            return AnyView(EditorSearchField(text: panelSearch(.console), placeholder: "Filter log"))
         case .tasks:
             return AnyView(HStack(spacing: 8) {
                 EditorSearchField(text: panelSearch(.tasks), placeholder: "Filter tasks")
