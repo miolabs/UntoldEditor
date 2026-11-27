@@ -94,6 +94,9 @@ public struct EditorView: View {
         _selectionManager = StateObject(wrappedValue: sharedSelectionManager)
         editorController = EditorController(selectionManager: sharedSelectionManager)
         renderer = UntoldRenderer.create(configuration: .editor)
+        // Try-out only: static batching is on from the start, so that the parts a pack
+        // places once are merged while it loads (Inspector > Static Batching shows it).
+        setBatching(.enabled(true))
         VisionProPreviewSession.shared.renderer = renderer
         // Extensions that create pipelines must be registered after the renderer
         // has initialized Metal and loaded the engine shader library.

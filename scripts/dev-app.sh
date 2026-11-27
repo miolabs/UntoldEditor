@@ -24,9 +24,9 @@ for arg in "$@"; do
 done
 
 if [ "$RUN" = 1 ]; then
-    swift build -c "$CONFIG"
+    /usr/bin/swift build -c "$CONFIG" -Xswiftc -DENGINE_STATS_ENABLED
 fi
-BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
+BIN_DIR="$(/usr/bin/swift build -c "$CONFIG" -Xswiftc -DENGINE_STATS_ENABLED --show-bin-path)"
 if [ ! -x "$BIN_DIR/UntoldEditor" ]; then
     echo "No $CONFIG build in $BIN_DIR: run 'swift build -c $CONFIG' first." >&2
     exit 1
