@@ -301,6 +301,25 @@ extension AssetBrowserView {
                     }
                 }
 
+                // Try-out only: a scene cooked into a pack gets its LOD chains right away, as
+                // `untoldengine export` gives them. Without them a large scene draws every
+                // model at full detail.
+                if exportSucceeded {
+                    let packURL = outputURL.deletingPathExtension().appendingPathExtension("untoldpack")
+                    if FileManager.default.fileExists(atPath: packURL.path) {
+                        task.setDetail("Building LOD chains…")
+                        DispatchQueue.main.async { showStatus("Building LOD chains...") }
+                        do {
+                            let report = try UntoldMeshLODCooker.cookChains(forPackAt: packURL)
+                            let megabytes = String(format: "%.0f", Double(report.levelBytes) / 1_048_576)
+                            let summary = "LOD chains: \(report.chainCount) of \(report.modelCount) models, \(report.levelCount) level files, \(megabytes) MB"
+                            DispatchQueue.main.async { Logger.log(message: summary) }
+                        } catch {
+                            DispatchQueue.main.async { Logger.log(message: "⚠️ The LOD chains were not built: \(error)") }
+                        }
+                    }
+                }
+
                 if wasCancelled {
                     // Don't leave a half-written runtime asset behind.
                     try? FileManager.default.removeItem(at: outputURL)
