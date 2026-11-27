@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var window: NSWindow!
 
     private let appName = "Untold Engine Editor"
-    static let editorVersion = "0.25.0"
+    static let editorVersion = "0.26.0"
 
     private var projectTitleSubscription: AnyCancellable?
 
@@ -67,7 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Step 1. Create and configure the window
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1920, height: 1080),
-            styleMask: [.titled, .closable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -154,6 +154,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addPanelItem(.inspector, to: viewMenu, title: "Show Inspector", key: "3")
         addPanelItem(.environment, to: viewMenu, title: "Show Environment", key: "")
         addPanelItem(.effects, to: viewMenu, title: "Show Effects", key: "")
+        addPanelItem(.streaming, to: viewMenu, title: "Show Texture Streaming", key: "")
         addItem(to: viewMenu, title: "Focus Viewport", action: #selector(menuToggleFocusViewport), key: "f")
         viewMenu.addItem(.separator())
         // The dock panels one by one, so a panel closed from its tab comes back from here.
