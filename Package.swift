@@ -16,7 +16,8 @@ let package = Package(
         // .package(url: "https://github.com/untoldengine/UntoldEngine.git", exact: "0.21.0"),
         // Temporarily tracks the Gaussian splat streaming series on the fork until those engine
         // PRs land in a release; restore the exact pin afterwards.
-        .package(url: "https://github.com/miolabs/UntoldEngine.git", branch: "develop"),
+        // Try-out only: the engine of ../UntoldEngine (branch try/large_scene_stage1).
+        .package(path: "../UntoldEngine"),
         // Mesh-to-splat twin swap policy; the Inspector's Splat Twin section previews the swap
         // in the viewport through it. The fork-engine branch pins the fork engine (same URL as
         // above); switch back to main once the .untold patcher is upstream.
