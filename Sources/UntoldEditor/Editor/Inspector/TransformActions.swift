@@ -16,12 +16,7 @@ import UntoldEngine
 /// entity cannot stay in one.
 func editTransform(of entityId: EntityID, _ change: () -> Void) {
     let before = EditorTransformSnapshot(entityId: entityId)
-    if hasComponent(entityId: entityId, componentType: StaticBatchComponent.self) {
-        removeEntityStaticBatchComponent(entityId: entityId)
-        if isBatchingEnabled() {
-            generateBatches()
-        }
-    }
+    // Try-out only: the engine takes an entity that moves out of its batch by itself.
     change()
     syncGizmoToTurn(of: entityId)
     EditorUndoManager.shared.registerTransformChange(

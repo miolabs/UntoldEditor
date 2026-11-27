@@ -11,7 +11,8 @@ let package = Package(
     ],
     dependencies: [
         // Use a branch during active development:
-        .package(url: "https://github.com/untoldengine/UntoldEngine.git", branch: "develop"),
+        // Try-out only: the engine of ../UntoldEngine (branch try/large_scene_stage2_walks).
+        .package(path: "../UntoldEngine"),
         // Or pin to a release:
         // .package(url: "https://github.com/untoldengine/UntoldEngine.git", exact: "0.21.0"),
     ],
@@ -21,6 +22,8 @@ let package = Package(
             dependencies: [
                 .product(name: "UntoldEngine", package: "UntoldEngine"),
                 .product(name: "UntoldComponentKit", package: "UntoldEngine"),
+                // Try-out only: the editor builds a pack's LOD chains after a cook.
+                .product(name: "UntoldEngineMeshCook", package: "UntoldEngine"),
             ],
             path: "Sources/UntoldEditor",
             resources: [

@@ -81,18 +81,9 @@ extension UntoldRenderer {
         /// Remove static batching when entity is transformed via gizmo: from the
         /// active entity and, with several selected, from all the gizmo moves.
         @inline(__always)
-        func handleStaticBatchOnTransform(entityId: EntityID) {
-            let transformed = entityId == activeEntity ? gizmoTransformTargets() : [entityId]
-            let batched = transformed.filter { hasComponent(entityId: $0, componentType: StaticBatchComponent.self) }
-            guard batched.isEmpty == false else {
-                return
-            }
-            for entity in batched {
-                removeEntityStaticBatchComponent(entityId: entity)
-            }
-            if isBatchingEnabled() {
-                generateBatches()
-            }
+        func handleStaticBatchOnTransform(entityId _: EntityID) {
+            // Try-out only: the engine takes an entity that moves out of its batch and
+            // batches it again where it stops, so nothing is unmarked or rebuilt here.
         }
 
         if hasActiveAxisGizmoDrag() {
